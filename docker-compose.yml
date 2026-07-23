@@ -1,0 +1,11 @@
+services:
+  mock-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: lim_ai_mock_server
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
