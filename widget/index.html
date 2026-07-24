@@ -1,1 +1,177 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>AI LIM Assistant Copilot</title>
+    <!-- KaTeX per Matematica -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <!-- Plotly.js per Grafici Interattivi -->
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <!-- Mermaid.js per Mappe Concettuali -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- Model-Viewer per Oggetti 3D -->
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.1.1/model-viewer.min.js"></script>
 
+    <style>
+        @font-face {
+            font-family: 'OpenDyslexic';
+            src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/open-dyslexic-regular.woff') format('woff');
+        }
+
+        body { font-family: Arial, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; padding: 10px; }
+        .dsa-mode { font-family: 'OpenDyslexic', sans-serif !important; letter-spacing: 0.12em; line-height: 1.6; }
+
+        /* Header e Badge di Stato */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .status-badge { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+        .status-online { background-color: #a6e3a1; color: #11111b; }
+        .status-degraded { background-color: #f9e2af; color: #11111b; }
+        .status-offline { background-color: #f38ba8; color: #11111b; }
+
+        /* Banner Toast */
+        #toast-banner { display: none; background: #fab387; color: #11111b; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: bold; margin-bottom: 8px; }
+
+        /* Subtitles Bar */
+        #subtitles-bar { background: rgba(0,0,0,0.6); color: #a6e3a1; padding: 8px; border-radius: 6px; font-size: 13px; min-height: 22px; margin-bottom: 10px; border: 1px solid #45475a; }
+
+        /* Toolbar e Bottoni */
+        .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+        button { padding: 8px 10px; background: #89b4fa; border: none; border-radius: 6px; color: #11111b; font-weight: bold; cursor: pointer; font-size: 12px; }
+        button:active { background: #b4befe; }
+        button.dsa { background: #f9e2af; color: #11111b; }
+        button:disabled { background-color: #45475a !important; color: #a6adc8 !important; cursor: not-allowed; opacity: 0.6; }
+
+        /* Content Display Area */
+        #output-container { background: #181825; padding: 10px; border-radius: 8px; border: 1px solid #313244; min-height: 320px; max-height: 420px; overflow-y: auto; }
+        model-viewer { width: 100%; height: 300px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <span style="font-weight:bold; font-size:14px;">AI LIM Copilot</span>
+        <span id="status-badge" class="status-badge status-offline">🔴 Connessione...</span>
+    </div>
+
+    <div id="toast-banner"></div>
+    <div id="subtitles-bar">🎙️ Live STT: In attesa di input audio...</div>
+
+    <div class="toolbar">
+        <button onclick="requestAction('sympy_math')">📐 Math SymPy</button>
+        <button class="remote-only" data-name="🧠 Mappa" onclick="requestAction('concept_map')">🧠 Mappa</button>
+        <button class="remote-only" data-name="🧊 3D Model" onclick="requestAction('load_3d_model')">🧊 3D Model</button>
+        <button class="remote-only" data-name="❓ Quiz" onclick="requestAction('generate_quiz')">❓ Quiz</button>
+        <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
+    </div>
+
+    <div id="output-container">
+        <div id="output">Seleziona un'azione per iniziare.</div>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+
+        const SYSTEM_STATES = {
+            ONLINE: { class: "status-online", text: "🟢 Online (Full AI)" },
+            DEGRADED: { class: "status-degraded", text: "🟡 Locale (Modalità Base)" },
+            OFFLINE: { class: "status-offline", text: "🔴 Disconnesso" }
+        };
+
+        let currentState = SYSTEM_STATES.OFFLINE;
+        let ws = null;
+
+        function connectWebSocket() {
+            ws = new WebSocket("ws://127.0.0.1:5000/ws");
+
+            ws.onopen = () => {
+                setSystemState(SYSTEM_STATES.ONLINE);
+            };
+
+            ws.onmessage = (event) => {
+                let data = JSON.parse(event.data);
+
+                if (data.type === "system_warning") {
+                    setSystemState(SYSTEM_STATES.DEGRADED, data.message);
+                    return;
+                }
+
+                if (data.type === "pong_remote" && currentState === SYSTEM_STATES.DEGRADED) {
+                    setSystemState(SYSTEM_STATES.ONLINE, "Connessione Cloud Ripristinata!");
+                    return;
+                }
+
+                renderData(data);
+            };
+
+            ws.onclose = () => {
+                setSystemState(SYSTEM_STATES.OFFLINE, "Demone locale non raggiungibile. Riconnessione in corso...");
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function setSystemState(newState, message = "") {
+            currentState = newState;
+            const badge = document.getElementById("status-badge");
+            badge.className = `status-badge ${newState.class}`;
+            badge.innerText = newState.text;
+
+            const isDegradedOrOffline = (newState !== SYSTEM_STATES.ONLINE);
+            document.querySelectorAll(".remote-only").forEach(btn => {
+                btn.disabled = isDegradedOrOffline;
+                const baseName = btn.dataset.name;
+                btn.innerText = isDegradedOrOffline ? `${baseName} ☁️❌` : baseName;
+            });
+
+            if (message) {
+                const toast = document.getElementById("toast-banner");
+                toast.innerText = `ℹ️ ${message}`;
+                toast.style.display = "block";
+                setTimeout(() => { toast.style.display = "none"; }, 5000);
+            }
+        }
+
+        function renderData(data) {
+            const out = document.getElementById("output");
+            out.innerHTML = "";
+
+            if (data.type === "math") {
+                katex.render(data.latex, out, { displayMode: true });
+            } else if (data.type === "concept_map") {
+                out.innerHTML = `<pre class="mermaid">${data.mermaid_code}</pre>`;
+                mermaid.run();
+            } else if (data.type === "model_3d") {
+                out.innerHTML = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
+            } else if (data.type === "quiz") {
+                let html = "<b>Quiz di Verifica Rapida</b><hr>";
+                data.questions.forEach((q, i) => {
+                    html += `<p><b>${i+1}. ${q.question}</b></p>`;
+                    q.options.forEach(opt => {
+                        html += `<label><input type="radio" name="q${i}"> ${opt}</label><br>`;
+                    });
+                });
+                out.innerHTML = html;
+            }
+        }
+
+        function requestAction(actionType) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: actionType, data: "2*x + 6 - 12" }));
+            }
+        }
+
+        function toggleDSA() {
+            document.body.classList.toggle("dsa-mode");
+        }
+
+        // Loop di Health Check per Auto-Riconnessione Cloud
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN && currentState === SYSTEM_STATES.DEGRADED) {
+                ws.send(JSON.stringify({ action: "ping_remote" }));
+            }
+        }, 8000);
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
