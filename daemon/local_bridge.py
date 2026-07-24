@@ -98,6 +98,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             payload.get("data", "x^2 - 4")
                         )
                         await websocket.send_text(json.dumps(res))
+                    elif action == "fast_ocr":
+                        # Fast OCR is not implemented locally yet, return explicit NotImplemented error shape
+                        err_payload = {
+                            "type": "error",
+                            "code": "NOT_IMPLEMENTED",
+                            "action": "fast_ocr",
+                            "message": "OCR locale non ancora disponibile"
+                        }
+                        await websocket.send_text(json.dumps(err_payload))
 
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
