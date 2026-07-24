@@ -8,6 +8,7 @@ import httpx
 from mss import mss
 from PIL import Image
 import sympy as sp
+import pytesseract
 
 # Import the configuration settings and routes router dynamically
 from settings_api import settings, router as settings_router
@@ -124,11 +125,12 @@ async def websocket_endpoint(websocket: WebSocket):
                                     img.save(tmp_file.name)
                                     tmp_path = tmp_file.name
 
-                            response_text = f"[OCR non ancora integrato, cattura riuscita: {width}x{height} px]"
-                            logger.info(f"Screen capture saved successfully to: {tmp_path}")
+                            # Perform real OCR on the captured PIL Image using pytesseract
+                            response_text = pytesseract.image_to_string(img).strip()
+                            logger.info("Screen capture successfully processed with Tesseract OCR.")
                         except Exception as e:
                             # Note display access limitation explicitly
-                            logger.error(f"Failed to capture screen: {e}. Headless display environment restriction may apply.")
+                            logger.error(f"Failed to capture screen or perform OCR: {e}. Headless display environment restriction may apply.")
                             response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {e}]"
 
                         ocr_payload = {

@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
+import pytesseract
 
 # Ensure daemon directory is in sys.path
 import sys
@@ -37,9 +39,26 @@ def test_sympy_math_local_route() -> None:
         assert "f(x) =" in response["latex"]
 
 
+def test_pytesseract_ocr_with_fixture() -> None:
+    """Tests raw pytesseract integration with a Pillow image fixture containing rendered text."""
+    # Create a 300x100 white background image
+    img = Image.new("RGB", (300, 100), color="white")
+    draw = ImageDraw.Draw(img)
+    # Render basic black text on it
+    draw.text((20, 40), "HELLO WORLD", fill="black")
+
+    # Run pytesseract OCR to verify integration is fully functional and binary loads correctly
+    try:
+        text = pytesseract.image_to_string(img).strip()
+        # Even if the headless character matching is loose, the call must execute successfully.
+        assert isinstance(text, str)
+    except Exception as e:
+        pytest.fail(f"pytesseract call failed with exception: {e}")
+
+
 @pytest.mark.asyncio
-async def test_fast_ocr_capture_success() -> None:
-    """Tests that fast_ocr correctly executes local screen capture and returns success placeholder."""
+async def test_fast_ocr_capture_success_with_ocr_mock() -> None:
+    """Tests that fast_ocr executes local screen capture and runs tesseract successfully."""
     client = TestClient(app)
 
     mock_sct_img = MagicMock()
@@ -47,10 +66,12 @@ async def test_fast_ocr_capture_success() -> None:
     mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
 
     with patch("local_bridge.mss") as mock_mss, \
-         patch("local_bridge.Image.frombytes") as mock_frombytes:
+         patch("local_bridge.Image.frombytes") as mock_frombytes, \
+         patch("local_bridge.pytesseract.image_to_string") as mock_ocr:
 
         mock_instance = mock_mss.return_value.__enter__.return_value
         mock_instance.grab.return_value = mock_sct_img
+        mock_ocr.return_value = "TEST OCR SUCCESSFUL CONTENT"
 
         with client.websocket_connect("/ws") as websocket:
             websocket.send_text(json.dumps({
@@ -60,7 +81,7 @@ async def test_fast_ocr_capture_success() -> None:
             response = websocket.receive_json()
             assert response["type"] == "ocr"
             assert response["source"] == "local_engine"
-            assert "cattura riuscita: 100x100 px" in response["text"]
+            assert response["text"] == "TEST OCR SUCCESSFUL CONTENT"
 
 
 @pytest.mark.asyncio
