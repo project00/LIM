@@ -80,8 +80,20 @@
 
         let currentState = SYSTEM_STATES.OFFLINE;
         let ws = null;
+        let reconnectTimeoutId = null;
 
         function connectWebSocket() {
+            // Avoid creating overlapping WebSocket connections
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+
+            // Clear any scheduled reconnection timeouts
+            if (reconnectTimeoutId) {
+                clearTimeout(reconnectTimeoutId);
+                reconnectTimeoutId = null;
+            }
+
             ws = new WebSocket("ws://127.0.0.1:5000/ws");
 
             ws.onopen = () => {
@@ -106,8 +118,10 @@
                     return;
                 }
 
-                if (data.type === "pong_remote" && currentState === SYSTEM_STATES.DEGRADED) {
-                    setSystemState(SYSTEM_STATES.ONLINE, "Connessione Cloud Ripristinata!");
+                if (data.type === "pong_remote") {
+                    if (currentState === SYSTEM_STATES.DEGRADED) {
+                        setSystemState(SYSTEM_STATES.ONLINE, "Connessione Cloud Ripristinata!");
+                    }
                     return;
                 }
 
@@ -116,7 +130,14 @@
 
             ws.onclose = () => {
                 setSystemState(SYSTEM_STATES.OFFLINE, "Demone locale non raggiungibile. Riconnessione in corso...");
-                setTimeout(connectWebSocket, 3000);
+
+                // Clean up websocket instance
+                ws = null;
+
+                // Schedule reconnection safely
+                if (!reconnectTimeoutId) {
+                    reconnectTimeoutId = setTimeout(connectWebSocket, 3000);
+                }
             };
         }
 
