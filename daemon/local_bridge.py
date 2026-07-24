@@ -40,7 +40,6 @@ class LocalEngine:
     @staticmethod
     def process_math(expr_str: str) -> dict:
         try:
-            x = sp.Symbol("x")
             expr = sp.sympify(expr_str)
             simplified = sp.simplify(expr)
             return {
