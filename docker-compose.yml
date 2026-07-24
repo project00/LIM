@@ -8,4 +8,5 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - API_KEY=mock_secret_token
     restart: unless-stopped
