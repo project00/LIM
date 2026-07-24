@@ -37,6 +37,18 @@ def test_sympy_math_local_route() -> None:
         assert "f(x) =" in response["latex"]
 
 
+def test_fast_ocr_local_route_not_implemented() -> None:
+    """Tests fast_ocr local route fallback yielding NOT_IMPLEMENTED error."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "fast_ocr"}))
+        response = websocket.receive_json()
+        assert response["type"] == "error"
+        assert response["code"] == "NOT_IMPLEMENTED"
+        assert response["action"] == "fast_ocr"
+        assert "non ancora disponibile" in response["message"]
+
+
 @pytest.mark.asyncio
 async def test_ping_remote_reachable() -> None:
     """Tests that ping_remote yields a pong_remote response when remote server is reachable."""
