@@ -13,7 +13,7 @@ Design Note:
 """
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -37,16 +37,50 @@ def test_sympy_math_local_route() -> None:
         assert "f(x) =" in response["latex"]
 
 
-def test_fast_ocr_local_route_not_implemented() -> None:
-    """Tests fast_ocr local route fallback yielding NOT_IMPLEMENTED error."""
+@pytest.mark.asyncio
+async def test_fast_ocr_capture_success() -> None:
+    """Tests that fast_ocr correctly executes local screen capture and returns success placeholder."""
     client = TestClient(app)
-    with client.websocket_connect("/ws") as websocket:
-        websocket.send_text(json.dumps({"action": "fast_ocr"}))
-        response = websocket.receive_json()
-        assert response["type"] == "error"
-        assert response["code"] == "NOT_IMPLEMENTED"
-        assert response["action"] == "fast_ocr"
-        assert "non ancora disponibile" in response["message"]
+
+    mock_sct_img = MagicMock()
+    mock_sct_img.size = (100, 100)
+    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
+
+    with patch("local_bridge.mss") as mock_mss, \
+         patch("local_bridge.Image.frombytes") as mock_frombytes:
+
+        mock_instance = mock_mss.return_value.__enter__.return_value
+        mock_instance.grab.return_value = mock_sct_img
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({
+                "action": "fast_ocr",
+                "data": {"region": {"x": 10, "y": 20, "width": 100, "height": 100}}
+            }))
+            response = websocket.receive_json()
+            assert response["type"] == "ocr"
+            assert response["source"] == "local_engine"
+            assert "cattura riuscita: 100x100 px" in response["text"]
+
+
+@pytest.mark.asyncio
+async def test_fast_ocr_capture_headless_failure() -> None:
+    """Tests that fast_ocr correctly catches and reports display access failures under headless environments."""
+    client = TestClient(app)
+
+    with patch("local_bridge.mss") as mock_mss:
+        mock_mss.side_effect = Exception("No DISPLAY environment variable found")
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({
+                "action": "fast_ocr",
+                "data": {"region": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+            }))
+            response = websocket.receive_json()
+            assert response["type"] == "ocr"
+            assert response["source"] == "local_engine"
+            assert "cattura fallita" in response["text"]
+            assert "No DISPLAY" in response["text"]
 
 
 @pytest.mark.asyncio

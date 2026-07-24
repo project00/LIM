@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 from enum import Enum
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import httpx
@@ -10,6 +11,13 @@ import sympy as sp
 
 # Import the configuration settings and routes router dynamically
 from settings_api import settings, router as settings_router
+
+# Configure standard logger following AGENTS.md
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("local_bridge")
 
 app = FastAPI(title="LIM AI Local Daemon Bridge")
 
@@ -62,7 +70,7 @@ class LocalEngine:
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("[LOCAL DAEMON] Widget LIM connesso via WebSocket.")
+    logger.info("Widget LIM connesso via WebSocket.")
 
     async with httpx.AsyncClient(timeout=2.5) as http_client:
         try:
@@ -87,9 +95,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 target = ModelRouter.get_target(action)
-                print(
-                    f"[ROUTER] Action: '{action}' ➔ Target selezionato: {target.value}"
-                )
+                logger.info(f"Action: '{action}' ➔ Target selezionato: {target.value}")
 
                 # --- ROUTE LOCALE ---
                 if target == RouteTarget.LOCAL:
@@ -99,14 +105,38 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
                         await websocket.send_text(json.dumps(res))
                     elif action == "fast_ocr":
-                        # Fast OCR is not implemented locally yet, return explicit NotImplemented error shape
-                        err_payload = {
-                            "type": "error",
-                            "code": "NOT_IMPLEMENTED",
-                            "action": "fast_ocr",
-                            "message": "OCR locale non ancora disponibile"
+                        data_obj = payload.get("data") or {}
+                        region = data_obj.get("region") or {}
+                        x = region.get("x", 0)
+                        y = region.get("y", 0)
+                        width = region.get("width", 1920)
+                        height = region.get("height", 1080)
+
+                        try:
+                            import tempfile
+                            with mss() as sct:
+                                monitor = {"top": int(y), "left": int(x), "width": int(width), "height": int(height)}
+                                sct_img = sct.grab(monitor)
+                                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+
+                                # Save to a temporary file
+                                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                                    img.save(tmp_file.name)
+                                    tmp_path = tmp_file.name
+
+                            response_text = f"[OCR non ancora integrato, cattura riuscita: {width}x{height} px]"
+                            logger.info(f"Screen capture saved successfully to: {tmp_path}")
+                        except Exception as e:
+                            # Note display access limitation explicitly
+                            logger.error(f"Failed to capture screen: {e}. Headless display environment restriction may apply.")
+                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {e}]"
+
+                        ocr_payload = {
+                            "type": "ocr",
+                            "source": "local_engine",
+                            "text": response_text
                         }
-                        await websocket.send_text(json.dumps(err_payload))
+                        await websocket.send_text(json.dumps(ocr_payload))
 
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
@@ -122,9 +152,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_text(response.text)
 
                     except (httpx.ConnectError, httpx.TimeoutException):
-                        print(
-                            f"[ROUTER WARN] Server remoto irraggiungibile per action: {action}"
-                        )
+                        logger.warning(f"Server remoto irraggiungibile per action: {action}")
                         fallback_msg = {
                             "type": "system_warning",
                             "message": "Server remoto offline. Passaggio a Modalità Locale.",
@@ -132,7 +160,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_text(json.dumps(fallback_msg))
 
         except WebSocketDisconnect:
-            print("[LOCAL DAEMON] Widget disconnesso.")
+            logger.info("Widget disconnesso.")
 
 
 if __name__ == "__main__":
