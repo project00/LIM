@@ -89,7 +89,17 @@
             };
 
             ws.onmessage = (event) => {
-                let data = JSON.parse(event.data);
+                let data;
+                try {
+                    data = JSON.parse(event.data);
+                } catch (e) {
+                    console.error("Errore nel parsing del payload JSON:", e);
+                    const toast = document.getElementById("toast-banner");
+                    toast.innerText = "ℹ️ Errore di comunicazione con il demone locale.";
+                    toast.style.display = "block";
+                    setTimeout(() => { toast.style.display = "none"; }, 5000);
+                    return;
+                }
 
                 if (data.type === "system_warning") {
                     setSystemState(SYSTEM_STATES.DEGRADED, data.message);
