@@ -8,9 +8,13 @@ from mss import mss
 from PIL import Image
 import sympy as sp
 
+# Import the configuration settings and routes router dynamically
+from settings_api import settings, router as settings_router
+
 app = FastAPI(title="LIM AI Local Daemon Bridge")
 
-REMOTE_SERVER_URL = "http://192.168.1.100:8000/api/v1/analyze"
+# Include the administrative and setup settings endpoints as specified
+app.include_router(settings_router)
 
 
 class RouteTarget(Enum):
@@ -67,11 +71,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 payload = json.loads(raw_data)
                 action = payload.get("action")
 
-                # Heartbeat check dal Widget
+                # Heartbeat check dal Widget using dynamically read remote_base_url
                 if action == "ping_remote":
                     try:
                         resp = await http_client.get(
-                            "http://192.168.1.100:8000/health"
+                            f"{settings.remote_base_url}/health",
+                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
                         )
                         if resp.status_code == 200:
                             await websocket.send_text(
@@ -97,8 +102,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
                     try:
+                        # Construct remote analyze URL dynamically
+                        remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
                         response = await http_client.post(
-                            REMOTE_SERVER_URL, json=payload
+                            remote_analyze_url,
+                            json=payload,
+                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
                         )
                         response.raise_for_status()
                         await websocket.send_text(response.text)

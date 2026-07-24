@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>LIM-AI Copilot — Impostazioni</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #1e1e2e; color: #cdd6f4; max-width: 420px; margin: 40px auto; padding: 0 16px; }
+  label { display:block; margin-top:14px; font-size:13px; }
+  input { width:100%; box-sizing:border-box; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #45475a; background:#181825; color:#cdd6f4; }
+  button { margin-top:16px; padding:10px 14px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; }
+  #save { background:#89b4fa; color:#11111b; }
+  #test { background:#f9e2af; color:#11111b; margin-left:8px; }
+  #result { margin-top:12px; font-size:13px; padding:8px; border-radius:6px; display:none; }
+  .ok { background:#a6e3a1; color:#11111b; }
+  .err { background:#f38ba8; color:#11111b; }
+</style>
+</head>
+<body>
+  <h1>⚙️ LIM-AI Copilot — Impostazioni</h1>
+  <label>Server Remoto (URL)<input id="url" placeholder="http://192.168.1.100:8000"></label>
+  <label>API Key<input id="key" type="password" placeholder="Lascia vuoto per non modificare"></label>
+  <button id="save">💾 Salva</button>
+  <button id="test">🔌 Verifica Connessione</button>
+  <div id="result"></div>
+<script>
+async function loadConfig() {
+  const r = await fetch("/api/config"); const d = await r.json();
+  document.getElementById("url").value = d.remote_base_url;
+  document.getElementById("key").placeholder = d.api_key_masked || "Nessuna chiave impostata";
+}
+document.getElementById("save").onclick = async () => {
+  const body = { remote_base_url: document.getElementById("url").value };
+  const key = document.getElementById("key").value;
+  if (key) body.api_key = key;
+  await fetch("/api/config", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  showResult(true, "Impostazioni salvate."); loadConfig();
+};
+document.getElementById("test").onclick = async () => {
+  showResult(null, "Verifica in corso...");
+  const r = await fetch("/api/test-connection", { method: "POST" }); const d = await r.json();
+  if (d.status === "ok") showResult(true, `Connesso (${d.latency_ms} ms)`);
+  else showResult(false, d.message || "Connessione non riuscita");
+};
+function showResult(ok, msg) {
+  const el = document.getElementById("result");
+  el.style.display = "block";
+  el.className = ok === null ? "" : (ok ? "ok" : "err");
+  el.innerText = msg;
+}
+loadConfig();
+</script>
+</body>
+</html>
