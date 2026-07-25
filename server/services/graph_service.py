@@ -4,13 +4,17 @@ Graph Service for LIM-AI Copilot Remote Server.
 Design Note:
     This module handles generating mind maps and concept maps in Mermaid.js syntax
     using LiteLLM. It loads model configuration at module startup, failing immediately
-    if LLM_MODEL or LLM_API_KEY are unset. It performs completion calls securely and cleans/strips
-    potential Markdown code fences before returning raw Mermaid graph syntax.
+    if LLM_MODEL or LLM_API_KEY are unset. It performs completion calls securely, and
+    uses the validate_and_sanitize_mermaid helper to clean and validate output formats
+    and XSS security.
 """
 
 import logging
 import os
 import litellm
+
+# Import Mermaid validation helpers
+from services.mermaid_validator import validate_and_sanitize_mermaid
 
 logger = logging.getLogger("server_graph_service")
 
@@ -36,7 +40,7 @@ def generate_concept_map(topic: str, language: str) -> str:
         language: The target language (e.g. "it").
 
     Returns:
-        The raw Mermaid graph syntax string, cleaned of any markdown fences.
+        The raw Mermaid graph syntax string, cleaned and fully validated.
     """
     logger.info("Generating concept map for topic: '%s' in language: '%s'", topic, language)
 
@@ -57,16 +61,6 @@ def generate_concept_map(topic: str, language: str) -> str:
 
     content = response.choices[0].message.content or ""
 
-    # Light strip of markdown/mermaid code fences if present
-    content_stripped = content.strip()
-    if content_stripped.startswith("```"):
-        lines = content_stripped.splitlines()
-        if len(lines) >= 2:
-            if lines[0].strip().startswith("```"):
-                lines = lines[1:]
-            if lines[-1].strip().startswith("```"):
-                lines = lines[:-1]
-            content_stripped = "\n".join(lines).strip()
-
-    content_stripped = content_stripped.replace("```mermaid", "").replace("```", "").strip()
-    return content_stripped
+    # Run strict validation and sanitization
+    sanitized_mermaid = validate_and_sanitize_mermaid(content)
+    return sanitized_mermaid

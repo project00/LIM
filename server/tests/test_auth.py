@@ -1,10 +1,10 @@
 """
-Unit Tests for LIM-AI Copilot Mock Remote Server Authentication and Services.
+Unit Tests for LIM-AI Copilot Mock Remote Server Authentication, Services and Validation.
 
 Design Note:
     This module tests the Bearer token authentication mechanism on the POST /api/v1/analyze
-    endpoint, and mocks LiteLLM to verify the prompt composition and responses for real
-    concept_map actions.
+    endpoint, mocks LiteLLM to verify the prompt composition, and tests strict Mermaid.js
+    validation and sanitization rules (fences, starts, empty, and XSS prevention).
 """
 
 import os
@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from main import app
+from services.mermaid_validator import validate_and_sanitize_mermaid, InvalidMermaidError
 
 
 def test_health_is_public_unauthenticated() -> None:
@@ -106,3 +107,84 @@ def test_concept_map_generation_success(mock_completion: MagicMock) -> None:
     assert "apparato circolatorio" in messages[0]["content"]
     assert "it" in messages[0]["content"]
     assert "Mermaid" in messages[0]["content"]
+
+
+def test_mermaid_validator_valid_passes() -> None:
+    """Confirm valid Mermaid passes through unchanged."""
+    valid_graph = "graph TD\n  A --> B"
+    valid_mindmap = "mindmap\n  root\n    node1"
+    valid_flowchart = "flowchart LR\n  X --> Y"
+
+    assert validate_and_sanitize_mermaid(valid_graph) == valid_graph
+    assert validate_and_sanitize_mermaid(valid_mindmap) == valid_mindmap
+    assert validate_and_sanitize_mermaid(valid_flowchart) == valid_flowchart
+
+
+def test_mermaid_validator_fenced_unfenced() -> None:
+    """Confirm fenced Mermaid gets unfenced correctly."""
+    fenced_1 = "```mermaid\ngraph TD\n  A --> B\n```"
+    fenced_2 = "```\nflowchart LR\n  X --> Y\n```"
+
+    assert validate_and_sanitize_mermaid(fenced_1) == "graph TD\n  A --> B"
+    assert validate_and_sanitize_mermaid(fenced_2) == "flowchart LR\n  X --> Y"
+
+
+def test_mermaid_validator_empty_rejected() -> None:
+    """Confirm empty or whitespace-only output is rejected."""
+    with pytest.raises(InvalidMermaidError, match="vuoto"):
+        validate_and_sanitize_mermaid("")
+
+    with pytest.raises(InvalidMermaidError, match="vuoto"):
+        validate_and_sanitize_mermaid("   \n  \t ")
+
+
+def test_mermaid_validator_invalid_keyword_rejected() -> None:
+    """Confirm output not starting with flowchart/graph/mindmap is rejected."""
+    invalid_mermaid = "Mind map on chemistry:\nThis mindmap starts differently."
+    with pytest.raises(InvalidMermaidError, match="non inizia con una parola chiave valida"):
+        validate_and_sanitize_mermaid(invalid_mermaid)
+
+
+def test_mermaid_validator_xss_rejected() -> None:
+    """Confirm output containing script or other XSS tags is strictly rejected."""
+    xss_script = "graph TD\n  A[node] --> B[<script>alert(1)</script>]"
+    xss_img = "flowchart LR\n  A[node] --> B[<img src=x onerror=alert(1)>]"
+    xss_iframe = "mindmap\n  root\n    <iframe src='javascript:alert(1)'></iframe>"
+    xss_javascript = "graph TD\n  A[node] --> B[javascript:alert(1)]"
+
+    for xss_input in (xss_script, xss_img, xss_iframe, xss_javascript):
+        with pytest.raises(InvalidMermaidError, match="potenziale contenuto XSS non sicuro"):
+            validate_and_sanitize_mermaid(xss_input)
+
+
+@patch("litellm.completion")
+def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> None:
+    """
+    Tests that POST /api/v1/analyze returns the correct error response structure
+    when the LLM output fails validation (e.g. contains invalid starting keywords).
+    """
+    client = TestClient(app)
+
+    # Configure the mock response with invalid output
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Here is your diagram:\ngraph TD\n  A --> B"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_completion.return_value = mock_response
+
+    payload = {
+        "action": "concept_map",
+        "data": {
+            "topic": "apparato circolatorio"
+        }
+    }
+    headers = {"Authorization": "Bearer test_secret_token"}
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "INVALID_LLM_OUTPUT"
+    assert data["action"] == "concept_map"
+    assert "non inizia con una parola chiave valida" in data["message"]

@@ -28,8 +28,9 @@ if not API_KEY:
     # Fail to start immediately with a clear error if it's not configured
     raise RuntimeError("API_KEY environment variable is not configured. Server startup aborted.")
 
-# Import the graph service (will also validate LLM_MODEL is configured at startup)
+# Import the graph service and validation errors (will also validate LLM_MODEL is configured at startup)
 from services.graph_service import generate_concept_map
+from services.mermaid_validator import InvalidMermaidError
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
@@ -125,14 +126,23 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
             )
         language = data_obj.get("language", "it")
 
-        # Call the real concept map generator using LiteLLM
-        mermaid_code = generate_concept_map(topic, language)
+        try:
+            # Call the real concept map generator using LiteLLM
+            mermaid_code = generate_concept_map(topic, language)
 
-        return {
-            "type": "concept_map",
-            "source": "remote_llm",
-            "mermaid_code": mermaid_code
-        }
+            return {
+                "type": "concept_map",
+                "source": "remote_llm",
+                "mermaid_code": mermaid_code
+            }
+        except InvalidMermaidError as e:
+            logger.warning("Mermaid validation error occurred: %s", e)
+            return {
+                "type": "error",
+                "code": "INVALID_LLM_OUTPUT",
+                "action": "concept_map",
+                "message": str(e)
+            }
 
     # Mirror back the payload with augmented metadata for non-implemented remote actions
     response_data = dict(payload)
