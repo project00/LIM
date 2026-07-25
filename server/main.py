@@ -28,6 +28,9 @@ if not API_KEY:
     # Fail to start immediately with a clear error if it's not configured
     raise RuntimeError("API_KEY environment variable is not configured. Server startup aborted.")
 
+# Import the graph service (will also validate LLM_MODEL is configured at startup)
+from services.graph_service import generate_concept_map
+
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
     description="Mock remote server for development verification and API routing with authentication",
@@ -99,16 +102,39 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
     Mock analyze endpoint that echoes back request payloads with added metadata.
     Requires dynamic bearer token verification.
 
+    If the requested action is 'concept_map', generates a real concept map
+    using LiteLLM.
+
     Args:
         payload: Arbitrary JSON data representing the requested action.
-        _auth: Injected authentication dependecy.
+        _auth: Injected authentication dependency.
 
     Returns:
-        The exact request payload augmented with "source": "mock_server".
+        The exact request payload processed or augmented with "source" metadata.
     """
-    logger.info("Authenticated analyze request with payload action: %s", payload.get("action"))
+    action = payload.get("action")
+    logger.info("Authenticated analyze request with payload action: %s", action)
 
-    # Mirror back the payload with augmented metadata
+    if action == "concept_map":
+        data_obj = payload.get("data") or {}
+        topic = data_obj.get("topic")
+        if not topic:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'topic' field inside 'data' for 'concept_map' action"
+            )
+        language = data_obj.get("language", "it")
+
+        # Call the real concept map generator using LiteLLM
+        mermaid_code = generate_concept_map(topic, language)
+
+        return {
+            "type": "concept_map",
+            "source": "remote_llm",
+            "mermaid_code": mermaid_code
+        }
+
+    # Mirror back the payload with augmented metadata for non-implemented remote actions
     response_data = dict(payload)
     response_data["source"] = "mock_server"
 
