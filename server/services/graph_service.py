@@ -4,7 +4,7 @@ Graph Service for LIM-AI Copilot Remote Server.
 Design Note:
     This module handles generating mind maps and concept maps in Mermaid.js syntax
     using LiteLLM. It loads model configuration at module startup, failing immediately
-    if LLM_MODEL is unset. It performs completion calls securely and cleans/strips
+    if LLM_MODEL or LLM_API_KEY are unset. It performs completion calls securely and cleans/strips
     potential Markdown code fences before returning raw Mermaid graph syntax.
 """
 
@@ -19,7 +19,11 @@ LLM_MODEL = os.getenv("LLM_MODEL")
 if not LLM_MODEL:
     raise RuntimeError("LLM_MODEL environment variable is not configured. Server startup aborted.")
 
+# Ensure required LLM_API_KEY environment variable is present at module startup (fail-fast)
 LLM_API_KEY = os.getenv("LLM_API_KEY")
+if not LLM_API_KEY:
+    raise RuntimeError("LLM_API_KEY environment variable is not configured. Server startup aborted.")
+
 LLM_API_BASE = os.getenv("LLM_API_BASE")
 
 
