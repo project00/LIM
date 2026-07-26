@@ -32,6 +32,7 @@ if not API_KEY:
 from services.graph_service import generate_concept_map  # noqa: E402
 from services.mermaid_validator import InvalidMermaidError  # noqa: E402
 from services.stt_service import transcribe_audio  # noqa: E402
+from services.translate_service import translate_text  # noqa: E402
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
@@ -168,11 +169,16 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
                 encoding=str(encoding)
             )
 
+            target_language = data_obj.get("target_language")
+            translated_text = None
+            if target_language:
+                translated_text = translate_text(text, str(target_language))
+
             return {
                 "type": "transcription",
                 "source": "remote_stt",
                 "text": text,
-                "translated_text": None
+                "translated_text": translated_text
             }
         except ValueError as e:
             logger.warning("Validation error during audio transcription: %s", e)

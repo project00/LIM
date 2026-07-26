@@ -15,7 +15,7 @@ import wave
 import pytest
 import numpy as np
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -134,7 +134,7 @@ def test_wav_fixture_end_to_end(tmp_path: Path) -> None:
             "audio_base64": audio_base64,
             "sample_rate": 16000,
             "encoding": "pcm_s16le",
-            "target_language": "en"  # Target language is ignored and translated_text remains null
+            "target_language": None  # Target language is None so translation is skipped
         }
     }
 
@@ -182,6 +182,97 @@ def test_import_fails_when_whisper_model_size_unset() -> None:
         if "services.stt_service" in sys.modules:
             del sys.modules["services.stt_service"]
         importlib.import_module("services.stt_service")
+
+
+@patch("litellm.completion")
+def test_transcribe_audio_with_translation_success(mock_completion: MagicMock) -> None:
+    """
+    Tests that POST /api/v1/analyze with a 'transcribe_audio' action and truthy target_language
+    calls the translation service using LiteLLM and returns the translated text.
+    """
+    # 1. Create silent audio
+    raw_bytes = b"\x00" * 200
+    audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    # 2. Mock STT transcription response
+    mock_seg = MagicMock()
+    mock_seg.text = "Hello world"
+    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+
+    # 3. Mock LiteLLM translation response
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Ciao mondo"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_completion.return_value = mock_response
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test_secret_token"}
+    payload = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": audio_base64,
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le",
+            "target_language": "it"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "transcription"
+    assert data["text"] == "Hello world"
+    assert data["translated_text"] == "Ciao mondo"
+
+    # Verify that LiteLLM completion was called with the correct prompt and parameters
+    mock_completion.assert_called_once()
+    called_kwargs = mock_completion.call_args[1]
+    assert called_kwargs["model"] == "gpt-4o-mini"
+    assert called_kwargs["api_key"] == "test_provider_key"
+    messages = called_kwargs["messages"]
+    assert len(messages) == 1
+    assert "Translate" in messages[0]["content"]
+    assert "it" in messages[0]["content"]
+    assert "Hello world" in messages[0]["content"]
+
+
+@patch("litellm.completion")
+def test_transcribe_audio_without_translation_skips(mock_completion: MagicMock) -> None:
+    """
+    Tests that POST /api/v1/analyze with target_language omitted or null
+    does not call the translation service and leaves translated_text as None.
+    """
+    raw_bytes = b"\x00" * 200
+    audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    mock_seg = MagicMock()
+    mock_seg.text = "Hello world"
+    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test_secret_token"}
+    payload = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": audio_base64,
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le",
+            "target_language": None
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "transcription"
+    assert data["text"] == "Hello world"
+    assert data["translated_text"] is None
+
+    # Verify LiteLLM completion was NOT called
+    mock_completion.assert_not_called()
 
 
 def test_import_fails_when_whisper_device_unset() -> None:
