@@ -87,12 +87,19 @@ class TranscriptionSession:
         self.stream = None
         self.pyaudio_instance = None
         self.is_running: bool = False
+        self.websocket: WebSocket | None = None
+        self.http_client: httpx.AsyncClient | None = None
+        self.target_language: str | None = None
 
-    async def start(self, websocket: WebSocket, target_language: str | None) -> None:
+    async def start(self, websocket: WebSocket, http_client: httpx.AsyncClient, target_language: str | None) -> None:
         """Starts a background audio capture loop."""
         if self.is_running:
             logger.warning("Transcription already running. Stopping previous stream first.")
             await self.stop()
+
+        self.websocket = websocket
+        self.http_client = http_client
+        self.target_language = target_language
 
         import pyaudio
 
@@ -169,6 +176,56 @@ class TranscriptionSession:
                         f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
                         f"duration={duration:.2f}s"
                     )
+
+                    # Base64-encode chunk and POST to remote server
+                    import base64
+                    encoded_chunk = base64.b64encode(chunk_to_process).decode("utf-8")
+
+                    payload = {
+                        "action": "transcribe_audio",
+                        "data": {
+                            "audio_base64": encoded_chunk,
+                            "sample_rate": rate,
+                            "encoding": "pcm_s16le",
+                            "target_language": self.target_language
+                        }
+                    }
+
+                    headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+
+                    try:
+                        remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                        response = await self.http_client.post(
+                            remote_analyze_url,
+                            json=payload,
+                            headers=headers
+                        )
+                        response.raise_for_status()
+                        resp_json = response.json()
+
+                        # Parse text and translated_text, and forward to widget
+                        text = resp_json.get("text")
+                        translated_text = resp_json.get("translated_text")
+
+                        websocket_payload = {
+                            "type": "subtitle",
+                            "source": "remote_stt",
+                            "text": text,
+                            "translated_text": translated_text,
+                            "is_final": True
+                        }
+                        await self.websocket.send_text(json.dumps(websocket_payload))
+
+                    except (httpx.ConnectError, httpx.TimeoutException) as e:
+                        logger.warning(f"Server remoto irraggiungibile per trascrizione audio: {e}")
+                        fallback_msg = {
+                            "type": "system_warning",
+                            "message": "Server remoto offline. Passaggio a Modalità Locale.",
+                        }
+                        await self.websocket.send_text(json.dumps(fallback_msg))
+                    except Exception as e:
+                        # Log the error, skip that chunk and keep capturing
+                        logger.error(f"Errore durante l'elaborazione o l'invio della trascrizione audio: {e}")
         except asyncio.CancelledError:
             logger.info("Microphone capture loop background task cancelled.")
         except Exception as e:
@@ -282,7 +339,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     elif action == "start_transcription":
                         data_obj = payload.get("data") or {}
                         target_lang = data_obj.get("target_language")
-                        await transcription_session.start(websocket, target_lang)
+                        await transcription_session.start(websocket, http_client, target_lang)
 
                     elif action == "stop_transcription":
                         await transcription_session.stop()

@@ -318,3 +318,120 @@ async def test_start_transcription_double_start() -> None:
         # Verify previous stream cleanup was called during second start or during stop
         assert mock_stream.stop_stream.call_count >= 1
         assert mock_stream.close.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_transcription_session_integration_success() -> None:
+    """Tests that active transcription captures audio, calls remote server, and sends correct subtitle JSON."""
+    client = TestClient(app)
+
+    mock_pyaudio = MagicMock()
+    mock_stream = MagicMock()
+    mock_pyaudio.open.return_value = mock_stream
+
+    # Side-effect reads exactly one full chunk and then returns empty to gracefully yield
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    remote_response_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Hello world from remote whisper",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_response_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_pyaudio), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+
+        mock_post.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            # Start transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Wait for the chunk to be captured, processed, and forwarded
+            response = websocket.receive_json()
+
+            # Assert that the subtitle JSON is correctly shaped and forwarded
+            assert response["type"] == "subtitle"
+            assert response["source"] == "remote_stt"
+            assert response["text"] == "Hello world from remote whisper"
+            assert response["translated_text"] is None
+            assert response["is_final"] is True
+
+            # Stop transcription
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Assert the HTTP POST payload
+        mock_post.assert_called_once()
+        called_kwargs = mock_post.call_args[1]
+        assert "json" in called_kwargs
+        post_payload = called_kwargs["json"]
+        assert post_payload["action"] == "transcribe_audio"
+        assert post_payload["data"]["sample_rate"] == 16000
+        assert post_payload["data"]["encoding"] == "pcm_s16le"
+        assert post_payload["data"]["target_language"] == "en"
+        assert len(post_payload["data"]["audio_base64"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_transcription_session_remote_failure_handling() -> None:
+    """Tests that a remote POST error (timeout or connection error) does not crash the capture loop."""
+    client = TestClient(app)
+
+    mock_pyaudio = MagicMock()
+    mock_stream = MagicMock()
+    mock_pyaudio.open.return_value = mock_stream
+
+    # We want it to read twice to produce two chunks, the first one fails, the second one succeeds
+    mock_stream.read.side_effect = [b"\x00" * 32000, b"\x00" * 32000, b""]
+
+    # First call will raise TimeoutException, second call will succeed
+    first_call_effect = httpx.TimeoutException("Remote server timed out")
+
+    remote_response_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Second chunk succeeded",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_response_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_pyaudio), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+
+        mock_post.side_effect = [first_call_effect, mock_resp]
+
+        with client.websocket_connect("/ws") as websocket:
+            # Start transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
+
+            # First response must be system warning
+            response_1 = websocket.receive_json()
+            assert response_1["type"] == "system_warning"
+            assert "offline" in response_1["message"]
+
+            # Second response should be the successful second chunk subtitle!
+            response_2 = websocket.receive_json()
+            assert response_2["type"] == "subtitle"
+            assert response_2["text"] == "Second chunk succeeded"
+
+            # Stop transcription
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Assert post was called twice
+        assert mock_post.call_count == 2
