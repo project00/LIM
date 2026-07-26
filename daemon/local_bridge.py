@@ -1,5 +1,4 @@
 import asyncio
-import io
 import json
 import logging
 from enum import Enum
@@ -37,6 +36,8 @@ class ModelRouter:
     ROUTING_TABLE = {
         "sympy_math": RouteTarget.LOCAL,
         "fast_ocr": RouteTarget.LOCAL,
+        "start_transcription": RouteTarget.LOCAL,
+        "stop_transcription": RouteTarget.LOCAL,
         "concept_map": RouteTarget.REMOTE,
         "load_3d_model": RouteTarget.REMOTE,
         "generate_quiz": RouteTarget.REMOTE,
@@ -60,7 +61,7 @@ class LocalEngine:
                 "source": "local_engine",
                 "latex": f"f(x) = {sp.latex(simplified)}",
             }
-        except Exception as e:
+        except Exception:
             return {
                 "type": "math",
                 "source": "local_engine",
@@ -68,10 +69,149 @@ class LocalEngine:
             }
 
 
+class TranscriptionSession:
+    """
+    Design Note:
+        This class manages local microphone audio capture and its lifecycle.
+        It runs an asynchronous background task which reads from a PyAudio input stream
+        in chunks. Reading is offloaded to a separate worker thread using `asyncio.to_thread`
+        to prevent blocking FastAPI's central single-threaded event loop.
+        It records raw audio in 16kHz, mono, 16-bit format (paInt16), and accumulates chunks
+        until they reach a ~1 second size (32,000 bytes) matching the expectations of Faster-Whisper.
+        It handles errors gracefully (e.g. lack of default input device or audio hardware) by raising
+        and returning a well-defined error JSON back to the widget.
+    """
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
+        self.stream = None
+        self.pyaudio_instance = None
+        self.is_running: bool = False
+
+    async def start(self, websocket: WebSocket, target_language: str | None) -> None:
+        """Starts a background audio capture loop."""
+        if self.is_running:
+            logger.warning("Transcription already running. Stopping previous stream first.")
+            await self.stop()
+
+        import pyaudio
+
+        try:
+            self.pyaudio_instance = pyaudio.PyAudio()
+            # Try to open default input stream
+            # 16kHz mono 16-bit (2 bytes per sample)
+            self.stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                frames_per_buffer=1024
+            )
+        except Exception as e:
+            logger.error(f"Failed to open PyAudio input device: {e}")
+            if self.stream:
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
+            if self.pyaudio_instance:
+                try:
+                    self.pyaudio_instance.terminate()
+                except Exception:
+                    pass
+                self.pyaudio_instance = None
+
+            # Send standard error payload back to the widget
+            error_payload = {
+                "type": "error",
+                "code": "NO_AUDIO_DEVICE",
+                "action": "start_transcription",
+                "message": f"Could not open audio input device: {e}"
+            }
+            await websocket.send_text(json.dumps(error_payload))
+            return
+
+        self.is_running = True
+        self.task = asyncio.create_task(self._capture_loop())
+        logger.info("Transcription session started successfully.")
+
+    async def _capture_loop(self) -> None:
+        """Background loop reading from PyAudio stream using asyncio.to_thread."""
+        rate = 16000
+        channels = 1
+        bytes_per_sample = 2  # paInt16
+        chunk_size_frames = 1024
+        target_bytes = 32000  # exactly 1 second (16000 * 1 * 2)
+
+        logger.info("Microphone background capture loop started.")
+        try:
+            buffer = bytearray()
+            while self.is_running and self.stream:
+                # Read frames in a thread to avoid blocking the event loop
+                data = await asyncio.to_thread(
+                    self.stream.read, chunk_size_frames, exception_on_overflow=False
+                )
+                if not data:
+                    await asyncio.sleep(0.01)
+                    continue
+
+                buffer.extend(data)
+
+                # Accumulate and log raw audio chunks of ~1-second duration
+                while len(buffer) >= target_bytes:
+                    chunk_to_process = buffer[:target_bytes]
+                    buffer = buffer[target_bytes:]
+
+                    # Calculate duration
+                    duration = len(chunk_to_process) / (rate * channels * bytes_per_sample)
+                    logger.info(
+                        f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
+                        f"duration={duration:.2f}s"
+                    )
+        except asyncio.CancelledError:
+            logger.info("Microphone capture loop background task cancelled.")
+        except Exception as e:
+            logger.error(f"Error in microphone capture loop: {e}")
+        finally:
+            logger.info("Microphone capture loop finished.")
+
+    async def stop(self) -> None:
+        """Cleans up active transcription tasks and releases PyAudio resources."""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception as e:
+                logger.error(f"Error closing PyAudio stream: {e}")
+            self.stream = None
+
+        if self.pyaudio_instance:
+            try:
+                self.pyaudio_instance.terminate()
+            except Exception as e:
+                logger.error(f"Error terminating PyAudio instance: {e}")
+            self.pyaudio_instance = None
+
+        logger.info("Transcription session stopped cleanly.")
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("Widget LIM connesso via WebSocket.")
+
+    # Instantiate per-connection transcription session manager
+    transcription_session = TranscriptionSession()
 
     async with httpx.AsyncClient(timeout=2.5) as http_client:
         try:
@@ -123,7 +263,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                 # Save to a temporary file
                                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
                                     img.save(tmp_file.name)
-                                    tmp_path = tmp_file.name
 
                             # Perform real OCR on the captured PIL Image using pytesseract
                             response_text = pytesseract.image_to_string(img).strip()
@@ -139,6 +278,14 @@ async def websocket_endpoint(websocket: WebSocket):
                             "text": response_text
                         }
                         await websocket.send_text(json.dumps(ocr_payload))
+
+                    elif action == "start_transcription":
+                        data_obj = payload.get("data") or {}
+                        target_lang = data_obj.get("target_language")
+                        await transcription_session.start(websocket, target_lang)
+
+                    elif action == "stop_transcription":
+                        await transcription_session.stop()
 
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
@@ -163,6 +310,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
         except WebSocketDisconnect:
             logger.info("Widget disconnesso.")
+        finally:
+            # Clean up the transcription stream on websocket disconnection
+            await transcription_session.stop()
 
 
 if __name__ == "__main__":
