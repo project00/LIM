@@ -1,0 +1,15 @@
+services:
+  mock-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: lim_ai_mock_server
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - API_KEY=${API_KEY}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_API_BASE=${LLM_API_BASE}
+    restart: unless-stopped
