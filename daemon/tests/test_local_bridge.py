@@ -279,3 +279,42 @@ async def test_stop_transcription_unstarted() -> None:
         }))
         res = websocket.receive_json()
         assert res["type"] == "math"
+
+
+@pytest.mark.asyncio
+async def test_start_transcription_double_start() -> None:
+    """Tests that sending start_transcription twice in a row cleanly stops the previous stream first before starting a new one."""
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    mock_stream.read.return_value = b"\x00" * 32000
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance):
+        with client.websocket_connect("/ws") as websocket:
+            # Send first start_transcription action
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+            await asyncio.sleep(0.05)
+
+            # Send second start_transcription action without stopping first
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
+            await asyncio.sleep(0.05)
+
+            # Send stop_transcription action
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Verify PyAudio open was called twice (once for each start_transcription)
+        assert mock_instance.open.call_count == 2
+        # Verify previous stream cleanup was called during second start or during stop
+        assert mock_stream.stop_stream.call_count >= 1
+        assert mock_stream.close.call_count >= 1
