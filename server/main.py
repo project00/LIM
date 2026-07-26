@@ -14,6 +14,7 @@ import logging
 import os
 from typing import Any, Dict
 from fastapi import FastAPI, Depends, Header, HTTPException, status
+import openai
 
 # Configure logging using standard logging library as per AGENTS.md philosophy
 logging.basicConfig(
@@ -172,7 +173,13 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
             target_language = data_obj.get("target_language")
             translated_text = None
             if target_language:
-                translated_text = translate_text(text, str(target_language))
+                try:
+                    translated_text = translate_text(text, str(target_language))
+                except openai.OpenAIError as e:
+                    logger.error(
+                        f"Translation failed due to LLM provider error: {e}",
+                        exc_info=True
+                    )
 
             return {
                 "type": "transcription",
