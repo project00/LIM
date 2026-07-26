@@ -8,6 +8,7 @@ Design Note:
     mock transcription segments and assert on transcription arguments.
 """
 
+import os
 import sys
 import base64
 import wave
@@ -153,3 +154,59 @@ def test_wav_fixture_end_to_end(tmp_path: Path) -> None:
     assert called_array.dtype == np.float32
     assert len(called_array) == 1600  # 3200 bytes / 2 bytes per sample = 1600 samples
     assert np.allclose(called_array, 0.0)
+
+
+def test_import_fails_when_whisper_model_size_unset() -> None:
+    """Tests that importing stt_service raises RuntimeError if WHISPER_MODEL_SIZE is unset."""
+    import importlib
+    import sys
+
+    # Save current env values
+    orig_size = os.environ.get("WHISPER_MODEL_SIZE")
+
+    # Remove from env and from sys.modules to force a fresh re-import/re-evaluation
+    if "WHISPER_MODEL_SIZE" in os.environ:
+        del os.environ["WHISPER_MODEL_SIZE"]
+    if "services.stt_service" in sys.modules:
+        del sys.modules["services.stt_service"]
+
+    try:
+        with pytest.raises(RuntimeError, match="WHISPER_MODEL_SIZE environment variable is not configured"):
+            importlib.import_module("services.stt_service")
+    finally:
+        # Restore env and re-import/restore sys.modules to original state so other tests are unaffected
+        if orig_size is not None:
+            os.environ["WHISPER_MODEL_SIZE"] = orig_size
+        else:
+            os.environ["WHISPER_MODEL_SIZE"] = "tiny"
+        if "services.stt_service" in sys.modules:
+            del sys.modules["services.stt_service"]
+        importlib.import_module("services.stt_service")
+
+
+def test_import_fails_when_whisper_device_unset() -> None:
+    """Tests that importing stt_service raises RuntimeError if WHISPER_DEVICE is unset."""
+    import importlib
+    import sys
+
+    # Save current env values
+    orig_device = os.environ.get("WHISPER_DEVICE")
+
+    # Remove from env and from sys.modules to force a fresh re-import/re-evaluation
+    if "WHISPER_DEVICE" in os.environ:
+        del os.environ["WHISPER_DEVICE"]
+    if "services.stt_service" in sys.modules:
+        del sys.modules["services.stt_service"]
+
+    try:
+        with pytest.raises(RuntimeError, match="WHISPER_DEVICE environment variable is not configured"):
+            importlib.import_module("services.stt_service")
+    finally:
+        # Restore env and re-import/restore sys.modules to original state so other tests are unaffected
+        if orig_device is not None:
+            os.environ["WHISPER_DEVICE"] = orig_device
+        else:
+            os.environ["WHISPER_DEVICE"] = "cpu"
+        if "services.stt_service" in sys.modules:
+            del sys.modules["services.stt_service"]
+        importlib.import_module("services.stt_service")
