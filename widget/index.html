@@ -33,7 +33,7 @@
         #toast-banner { display: none; background: #fab387; color: #11111b; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: bold; margin-bottom: 8px; }
 
         /* Subtitles Bar */
-        #subtitles-bar { background: rgba(0,0,0,0.6); color: #a6e3a1; padding: 8px; border-radius: 6px; font-size: 13px; min-height: 22px; margin-bottom: 10px; border: 1px solid #45475a; }
+        #subtitles-bar { background: rgba(0,0,0,0.6); color: #a6e3a1; padding: 8px; border-radius: 6px; font-size: 13px; min-height: 22px; margin-bottom: 10px; border: 1px solid #45475a; max-height: 80px; overflow-y: auto; }
 
         /* Toolbar e Bottoni */
         .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -62,6 +62,7 @@
         <button class="remote-only" data-name="🧠 Mappa" onclick="requestAction('concept_map')">🧠 Mappa</button>
         <button class="remote-only" data-name="🧊 3D Model" onclick="requestAction('load_3d_model')">🧊 3D Model</button>
         <button class="remote-only" data-name="❓ Quiz" onclick="requestAction('generate_quiz')">❓ Quiz</button>
+        <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
         <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
     </div>
 
@@ -98,6 +99,12 @@
 
             ws.onopen = () => {
                 setSystemState(SYSTEM_STATES.ONLINE);
+                if (subtitlesActive) {
+                    ws.send(JSON.stringify({
+                        action: "start_transcription",
+                        data: { target_language: null }
+                    }));
+                }
             };
 
             ws.onmessage = (event) => {
@@ -122,6 +129,11 @@
                     if (currentState === SYSTEM_STATES.DEGRADED) {
                         setSystemState(SYSTEM_STATES.ONLINE, "Connessione Cloud Ripristinata!");
                     }
+                    return;
+                }
+
+                if (data.type === "subtitle") {
+                    handleSubtitleMessage(data);
                     return;
                 }
 
@@ -160,6 +172,8 @@
                 toast.style.display = "block";
                 setTimeout(() => { toast.style.display = "none"; }, 5000);
             }
+
+            checkSubtitleConnectionState();
         }
 
         function renderData(data) {
@@ -193,6 +207,112 @@
 
         function toggleDSA() {
             document.body.classList.toggle("dsa-mode");
+        }
+
+        let subtitlesActive = false;
+        let finalSubtitles = [];
+        let interimSubtitle = null;
+
+        function escapeHTML(str) {
+            if (!str) return "";
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function toggleSubtitles() {
+            subtitlesActive = !subtitlesActive;
+            const btn = document.getElementById("btn-subtitles");
+            const bar = document.getElementById("subtitles-bar");
+            if (subtitlesActive) {
+                btn.style.background = "#a6e3a1"; // Green color
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: "start_transcription",
+                        data: { target_language: null }
+                    }));
+                }
+                checkSubtitleConnectionState();
+            } else {
+                btn.style.background = "#89b4fa"; // Standard button color
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: "stop_transcription"
+                    }));
+                }
+                finalSubtitles = [];
+                interimSubtitle = null;
+                bar.innerText = "🎙️ Live STT: In attesa di input audio...";
+            }
+        }
+
+        function checkSubtitleConnectionState() {
+            const bar = document.getElementById("subtitles-bar");
+            if (!bar) return;
+            if (subtitlesActive) {
+                if (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE) {
+                    bar.innerText = "Sottotitoli non disponibili in modalità locale";
+
+                    const toast = document.getElementById("toast-banner");
+                    toast.innerText = "ℹ️ Sottotitoli non disponibili in modalità locale";
+                    toast.style.display = "block";
+                    setTimeout(() => { toast.style.display = "none"; }, 5000);
+                } else {
+                    if (bar.innerText === "Sottotitoli non disponibili in modalità locale") {
+                        bar.innerText = "🎙️ Live STT: In ascolto...";
+                        updateSubtitlesDisplay();
+                    }
+                }
+            }
+        }
+
+        function handleSubtitleMessage(data) {
+            if (!subtitlesActive) return;
+
+            const text = escapeHTML(data.text);
+            const translated = data.translated_text ? escapeHTML(data.translated_text) : "";
+            const displayText = translated ? `${text} (${translated})` : text;
+
+            if (data.is_final) {
+                finalSubtitles.push(displayText);
+                interimSubtitle = null;
+            } else {
+                interimSubtitle = displayText;
+            }
+
+            updateSubtitlesDisplay();
+        }
+
+        function updateSubtitlesDisplay() {
+            const bar = document.getElementById("subtitles-bar");
+            if (!bar) return;
+
+            if (subtitlesActive && (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE)) {
+                return;
+            }
+
+            if (!subtitlesActive) {
+                return;
+            }
+
+            let html = "";
+            finalSubtitles.forEach(sub => {
+                html += `<div>${sub}</div>`;
+            });
+
+            if (interimSubtitle) {
+                html += `<div><i>${interimSubtitle}</i></div>`;
+            }
+
+            if (finalSubtitles.length === 0 && !interimSubtitle) {
+                bar.innerHTML = "🎙️ Live STT: In ascolto...";
+            } else {
+                bar.innerHTML = html;
+                bar.scrollTop = bar.scrollHeight;
+            }
         }
 
         // Loop di Health Check per Auto-Riconnessione Cloud

@@ -73,6 +73,31 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 { "type": "error", "code": "PARSE_ERROR", "action": "sympy_math", "message": "Impossibile interpretare l'espressione" }
 ```
 
+### `Sottotitoli Live & Traduzione` (Remoto)
+
+#### `start_transcription` (Richiesta dal Widget)
+Inviato dal Widget per avviare la trascrizione live.
+```json
+{ "action": "start_transcription", "data": { "target_language": null } }
+```
+
+#### `stop_transcription` (Richiesta dal Widget)
+Inviato dal Widget per arrestare la trascrizione live.
+```json
+{ "action": "stop_transcription" }
+```
+
+#### `subtitle` (Messaggio in arrivo)
+Inviato dal demone/server al Widget con i sottotitoli in tempo reale.
+```json
+{
+  "type": "subtitle",
+  "text": "testo trascritto",
+  "translated_text": "translated text if requested",
+  "is_final": false
+}
+```
+
 ---
 
 ## 2. REST — Endpoint di Amministrazione (Demone Locale)
