@@ -104,6 +104,37 @@ Inviato dal demone/server al Widget con i sottotitoli in tempo reale.
 
 > **Nota importante:** Quando restituiti tramite l'endpoint REST `POST /api/v1/analyze` (e non tramite WebSocket), i messaggi di errore utilizzano lo stato HTTP **200** con il corpo `{"type": "error", ...}` — non uno stato 4xx. Questo perché il proxy di `local_bridge.py` chiama `response.raise_for_status()` prima di inoltrare la risposta al widget, il che solleverebbe un'eccezione non gestita in caso di stato non-2xx.
 
+### `transcribe_audio` (via `POST /api/v1/analyze`, azione interna demone↔server)
+
+Non è un'azione che il Widget invia mai direttamente — il Demone la usa internamente per
+ogni chunk audio catturato via PyAudio (Task 11), per poi tradurre il risultato in un
+messaggio push `subtitle` verso il Widget.
+
+```json
+// Richiesta (demone -> server)
+{
+  "action": "transcribe_audio",
+  "data": {
+    "audio_base64": "...",
+    "sample_rate": 16000,
+    "encoding": "pcm_s16le",
+    "target_language": "en"
+  }
+}
+// Risposta
+{
+  "type": "transcription",
+  "source": "remote_stt",
+  "text": "testo trascritto del chunk",
+  "translated_text": "translated text or null if no target_language"
+}
+```
+> **Semplificazione deliberata per l'MVP**: ogni chunk (~1s) viene trascritto in blocco,
+> non in streaming con ipotesi parziali — quindi il Demone inoltra al Widget ogni risultato
+> come `subtitle` con `is_final: true`. Sottotitoli davvero "parola per parola" in tempo
+> reale (is_final: false progressivi) richiederebbero streaming ASR continuo, non chunk
+> discreti — rimandato a un miglioramento futuro, non necessario per l'obiettivo dello
+> sprint (sottotitoli utilizzabili in classe, non trascrizione professionale word-by-word).
 ---
 
 ## 2. REST — Endpoint di Amministrazione (Demone Locale)
