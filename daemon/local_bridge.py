@@ -77,7 +77,11 @@ class TranscriptionSession:
         in chunks. Reading is offloaded to a separate worker thread using `asyncio.to_thread`
         to prevent blocking FastAPI's central single-threaded event loop.
         It records raw audio in 16kHz, mono, 16-bit format (paInt16), and accumulates chunks
-        until they reach a ~1 second size (32,000 bytes) matching the expectations of Faster-Whisper.
+        until they reach a ~1 second size (32,000 bytes).
+        Each 1s chunk is base64-encoded and posted to the remote server. On success, the
+        transcription is forwarded back to the widget as a consolidated subtitle. If the remote
+        call fails (timeout/connection error), the exception is caught and logged, sending a
+        fallback warning to the widget, without interrupting the capture loop.
         It handles errors gracefully (e.g. lack of default input device or audio hardware) by raising
         and returning a well-defined error JSON back to the widget.
     """
@@ -87,12 +91,17 @@ class TranscriptionSession:
         self.stream = None
         self.pyaudio_instance = None
         self.is_running: bool = False
+        self.websocket: WebSocket | None = None
+        self.target_language: str | None = None
 
     async def start(self, websocket: WebSocket, target_language: str | None) -> None:
         """Starts a background audio capture loop."""
         if self.is_running:
             logger.warning("Transcription already running. Stopping previous stream first.")
             await self.stop()
+
+        self.websocket = websocket
+        self.target_language = target_language
 
         import pyaudio
 
@@ -145,30 +154,90 @@ class TranscriptionSession:
         target_bytes = 32000  # exactly 1 second (16000 * 1 * 2)
 
         logger.info("Microphone background capture loop started.")
+        import base64
         try:
             buffer = bytearray()
-            while self.is_running and self.stream:
-                # Read frames in a thread to avoid blocking the event loop
-                data = await asyncio.to_thread(
-                    self.stream.read, chunk_size_frames, exception_on_overflow=False
-                )
-                if not data:
-                    await asyncio.sleep(0.01)
-                    continue
-
-                buffer.extend(data)
-
-                # Accumulate and log raw audio chunks of ~1-second duration
-                while len(buffer) >= target_bytes:
-                    chunk_to_process = buffer[:target_bytes]
-                    buffer = buffer[target_bytes:]
-
-                    # Calculate duration
-                    duration = len(chunk_to_process) / (rate * channels * bytes_per_sample)
-                    logger.info(
-                        f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
-                        f"duration={duration:.2f}s"
+            async with httpx.AsyncClient(timeout=2.5) as http_client:
+                while self.is_running and self.stream:
+                    # Read frames in a thread to avoid blocking the event loop
+                    data = await asyncio.to_thread(
+                        self.stream.read, chunk_size_frames, exception_on_overflow=False
                     )
+                    if not data:
+                        await asyncio.sleep(0.01)
+                        continue
+
+                    buffer.extend(data)
+
+                    # Accumulate and log raw audio chunks of ~1-second duration
+                    while len(buffer) >= target_bytes:
+                        chunk_to_process = buffer[:target_bytes]
+                        buffer = buffer[target_bytes:]
+
+                        # Calculate duration
+                        duration = len(chunk_to_process) / (rate * channels * bytes_per_sample)
+                        logger.info(
+                            f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
+                            f"duration={duration:.2f}s"
+                        )
+
+                        # Base64-encode chunk and send to remote server
+                        audio_b64 = base64.b64encode(chunk_to_process).decode("utf-8")
+                        payload = {
+                            "action": "transcribe_audio",
+                            "data": {
+                                "audio_base64": audio_b64,
+                                "sample_rate": 16000,
+                                "encoding": "pcm_s16le",
+                                "target_language": self.target_language
+                            }
+                        }
+
+                        headers = {}
+                        if settings.api_key:
+                            headers["Authorization"] = f"Bearer {settings.api_key}"
+
+                        try:
+                            remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                            response = await http_client.post(
+                                remote_analyze_url,
+                                json=payload,
+                                headers=headers
+                            )
+                            response.raise_for_status()
+                            response_data = response.json()
+
+                            websocket_msg = {
+                                "type": "subtitle",
+                                "source": "remote_stt",
+                                "text": response_data.get("text"),
+                                "translated_text": response_data.get("translated_text"),
+                                "is_final": True
+                            }
+
+                            if self.websocket:
+                                await self.websocket.send_text(json.dumps(websocket_msg))
+
+                        except (httpx.ConnectError, httpx.TimeoutException) as e:
+                            logger.warning(
+                                f"Server remoto irraggiungibile per la trascrizione audio: {e}"
+                            )
+                            fallback_msg = {
+                                "type": "system_warning",
+                                "message": "Server remoto offline. Passaggio a Modalità Locale.",
+                            }
+                            if self.websocket:
+                                try:
+                                    await self.websocket.send_text(json.dumps(fallback_msg))
+                                except Exception as ws_err:
+                                    logger.error(
+                                        f"Failed to send system_warning to websocket: {ws_err}"
+                                    )
+                        except Exception as e:
+                            logger.error(
+                                f"Errore non gestito durante l'invio della trascrizione: {e}"
+                            )
+
         except asyncio.CancelledError:
             logger.info("Microphone capture loop background task cancelled.")
         except Exception as e:

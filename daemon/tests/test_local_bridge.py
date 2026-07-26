@@ -318,3 +318,94 @@ async def test_start_transcription_double_start() -> None:
         # Verify previous stream cleanup was called during second start or during stop
         assert mock_stream.stop_stream.call_count >= 1
         assert mock_stream.close.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_transcription_success_forward() -> None:
+    """
+    Tests that a successful remote transcription is correctly processed
+    and forwarded to the widget over the WebSocket as a 'subtitle' message.
+    """
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    # Yield one full chunk first, then return empty bytes to avoid continuous processing
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    # Mock the remote server response for transcribe_audio
+    remote_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Buongiorno classe",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            # Send start_transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Wait for message to be posted and response to be forwarded over WebSocket
+            response = websocket.receive_json()
+
+            # Verify the forwarded message content matches requirements
+            assert response["type"] == "subtitle"
+            assert response["source"] == "remote_stt"
+            assert response["text"] == "Buongiorno classe"
+            assert response["translated_text"] is None
+            assert response["is_final"] is True
+
+            # Stop the transcription cleanly
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_transcription_failure_handling() -> None:
+    """
+    Tests that a connection error or timeout during remote transcription
+    does not crash the capture loop, sends a system_warning to the widget, and keeps capturing.
+    """
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    # Yield one full chunk, then return empty bytes
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        # Simulate a connection timeout exception
+        mock_post.side_effect = httpx.TimeoutException("Remote server transcription timeout")
+
+        with client.websocket_connect("/ws") as websocket:
+            # Send start_transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
+
+            # Expect system_warning message sent back to the widget
+            response = websocket.receive_json()
+
+            assert response["type"] == "system_warning"
+            assert "offline" in response["message"]
+
+            # Stop transcription cleanly
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
