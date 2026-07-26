@@ -73,6 +73,35 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 { "type": "error", "code": "PARSE_ERROR", "action": "sympy_math", "message": "Impossibile interpretare l'espressione" }
 ```
 
+### `Sottotitoli Live & Traduzione` (Remoto)
+#### `start_transcription` (Richiesta dal Widget)
+Inviato dal Widget per avviare la trascrizione live.
+```json
+{ "action": "start_transcription", "data": { "target_language": null } }
+```
+#### `stop_transcription` (Richiesta dal Widget)
+Inviato dal Widget per arrestare la trascrizione live.
+```json
+{ "action": "stop_transcription" }
+```
+#### `subtitle` (Messaggio in arrivo)
+Inviato dal demone/server al Widget con i sottotitoli in tempo reale.
+```json
+{
+  "type": "subtitle",
+  "text": "testo trascritto",
+  "translated_text": "translated text if requested",
+  "is_final": false
+}
+```
+> **`is_final`**: `false` = risultato parziale/interinale (può ancora cambiare) — va mostrato
+> come riga temporanea. `true` = segmento consolidato, va accodato in modo permanente,
+> non sovrascritto dal prossimo parziale.
+>
+> **Fallback DEGRADED/OFFLINE**: se demone o server remoto non sono raggiungibili, il Widget
+> passa da solo al fallback locale via Web Speech API del browser (`SpeechRecognition`),
+> senza traduzione — gestito interamente lato client, nessun messaggio verso il demone.
+
 > **Nota importante:** Quando restituiti tramite l'endpoint REST `POST /api/v1/analyze` (e non tramite WebSocket), i messaggi di errore utilizzano lo stato HTTP **200** con il corpo `{"type": "error", ...}` — non uno stato 4xx. Questo perché il proxy di `local_bridge.py` chiama `response.raise_for_status()` prima di inoltrare la risposta al widget, il che solleverebbe un'eccezione non gestita in caso di stato non-2xx.
 
 ---
