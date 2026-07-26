@@ -36,7 +36,8 @@ Message includes source: remote_stt: YES
                                     )
                         except Exception as e:
                             logger.error(
-                                f"Errore non gestito durante l'invio della trascrizione: {e}"
+                                f"Errore non gestito durante l'invio della trascrizione: {e}",
+                                exc_info=True
                             )
 ```
 
