@@ -12,6 +12,7 @@ Design Note:
     pytest/unittest.mock paradigms.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
@@ -66,7 +67,7 @@ async def test_fast_ocr_capture_success_with_ocr_mock() -> None:
     mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
 
     with patch("local_bridge.mss") as mock_mss, \
-         patch("local_bridge.Image.frombytes") as mock_frombytes, \
+         patch("local_bridge.Image.frombytes"), \
          patch("local_bridge.pytesseract.image_to_string") as mock_ocr:
 
         mock_instance = mock_mss.return_value.__enter__.return_value
@@ -191,3 +192,129 @@ async def test_remote_connection_error_fallback() -> None:
             response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_transcription_success_mock() -> None:
+    """Tests start_transcription action correctly sets up and starts audio capture using PyAudio mocks."""
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    # Simulate return values of 1 second audio chunks
+    mock_stream.read.return_value = b"\x00" * 32000
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance):
+        with client.websocket_connect("/ws") as websocket:
+            # Send start_transcription action
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Allow some async events to run
+            await asyncio.sleep(0.1)
+
+            # Send stop_transcription action
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+
+            # Allow cleanup events to run
+            await asyncio.sleep(0.1)
+
+        import pyaudio
+        # Verify that PyAudio stream open was called with correct parameters
+        mock_instance.open.assert_called_once_with(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer=1024
+        )
+        # Verify cleanup
+        mock_stream.stop_stream.assert_called()
+        mock_stream.close.assert_called_once()
+        mock_instance.terminate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_transcription_device_failure() -> None:
+    """Tests start_transcription handles device failure gracefully by sending a standard error payload."""
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    # Simulate OSError when opening stream (no default input device)
+    mock_instance.open.side_effect = OSError("No default input device available")
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance):
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
+            response = websocket.receive_json()
+
+            assert response["type"] == "error"
+            assert response["code"] == "NO_AUDIO_DEVICE"
+            assert response["action"] == "start_transcription"
+            assert "No default input device available" in response["message"]
+
+
+@pytest.mark.asyncio
+async def test_stop_transcription_unstarted() -> None:
+    """Tests stop_transcription succeeds gracefully without throwing errors even if no stream was running."""
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({
+            "action": "stop_transcription"
+        }))
+        # Ensure WebSocket does not disconnect unexpectedly and remains open/usable
+        # We can ping the local websocket to confirm it's still alive
+        websocket.send_text(json.dumps({
+            "action": "sympy_math",
+            "data": "1+1"
+        }))
+        res = websocket.receive_json()
+        assert res["type"] == "math"
+
+
+@pytest.mark.asyncio
+async def test_start_transcription_double_start() -> None:
+    """Tests that sending start_transcription twice in a row cleanly stops the previous stream first before starting a new one."""
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    mock_stream.read.return_value = b"\x00" * 32000
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance):
+        with client.websocket_connect("/ws") as websocket:
+            # Send first start_transcription action
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+            await asyncio.sleep(0.05)
+
+            # Send second start_transcription action without stopping first
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
+            await asyncio.sleep(0.05)
+
+            # Send stop_transcription action
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Verify PyAudio open was called twice (once for each start_transcription)
+        assert mock_instance.open.call_count == 2
+        # Verify previous stream cleanup was called during second start or during stop
+        assert mock_stream.stop_stream.call_count >= 1
+        assert mock_stream.close.call_count >= 1

@@ -17,6 +17,7 @@ pillow = "^10.0.0"
 sympy = "^1.12"
 pyyaml = "^6.0.1"
 pytesseract = "^0.3.13"
+pyaudio = "^0.2.14"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
