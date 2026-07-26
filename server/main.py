@@ -29,8 +29,8 @@ if not API_KEY:
     raise RuntimeError("API_KEY environment variable is not configured. Server startup aborted.")
 
 # Import the graph service and validation errors (will also validate LLM_MODEL is configured at startup)
-from services.graph_service import generate_concept_map
-from services.mermaid_validator import InvalidMermaidError
+from services.graph_service import generate_concept_map  # noqa: E402
+from services.mermaid_validator import InvalidMermaidError  # noqa: E402
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",

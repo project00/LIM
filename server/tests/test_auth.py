@@ -8,7 +8,6 @@ Design Note:
 """
 
 import os
-import json
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -188,3 +187,69 @@ def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> No
     assert data["code"] == "INVALID_LLM_OUTPUT"
     assert data["action"] == "concept_map"
     assert "non inizia con una parola chiave valida" in data["message"]
+
+
+@patch("litellm.completion")
+def test_concept_map_xss_integration_rejection(mock_completion: MagicMock) -> None:
+    """
+    Tests that POST /api/v1/analyze returns the correct error response structure
+    when the LLM output contains an XSS vector like <script> or iframe.
+    """
+    client = TestClient(app)
+
+    # Configure the mock response with an XSS vector
+    mock_choice = MagicMock()
+    mock_choice.message.content = "graph TD\n  A[node] --> B[<script>alert('XSS')</script>]"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_completion.return_value = mock_response
+
+    payload = {
+        "action": "concept_map",
+        "data": {
+            "topic": "apparato circolatorio"
+        }
+    }
+    headers = {"Authorization": "Bearer test_secret_token"}
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "INVALID_LLM_OUTPUT"
+    assert data["action"] == "concept_map"
+    assert "potenziale contenuto XSS" in data["message"]
+
+
+@patch("litellm.completion")
+def test_concept_map_empty_integration_rejection(mock_completion: MagicMock) -> None:
+    """
+    Tests that POST /api/v1/analyze returns the correct error response structure
+    when the LLM output is empty or contains only markdown fences without code.
+    """
+    client = TestClient(app)
+
+    # Configure the mock response with empty output
+    mock_choice = MagicMock()
+    mock_choice.message.content = "```mermaid\n\n```"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_completion.return_value = mock_response
+
+    payload = {
+        "action": "concept_map",
+        "data": {
+            "topic": "apparato circolatorio"
+        }
+    }
+    headers = {"Authorization": "Bearer test_secret_token"}
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "INVALID_LLM_OUTPUT"
+    assert data["action"] == "concept_map"
+    assert "vuoto" in data["message"]
