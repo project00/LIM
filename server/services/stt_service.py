@@ -19,13 +19,13 @@ from faster_whisper import WhisperModel
 logger = logging.getLogger("server_stt_service")
 
 # Retrieve and validate environment variables for Whisper configuration at module startup
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE")
 if not WHISPER_MODEL_SIZE:
     raise RuntimeError(
         "WHISPER_MODEL_SIZE environment variable is not configured. Server startup aborted."
     )
 
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE")
 if not WHISPER_DEVICE:
     raise RuntimeError(
         "WHISPER_DEVICE environment variable is not configured. Server startup aborted."
