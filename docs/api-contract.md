@@ -73,6 +73,8 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 { "type": "error", "code": "PARSE_ERROR", "action": "sympy_math", "message": "Impossibile interpretare l'espressione" }
 ```
 
+> **Nota importante:** Quando restituiti tramite l'endpoint REST `POST /api/v1/analyze` (e non tramite WebSocket), i messaggi di errore utilizzano lo stato HTTP **200** con il corpo `{"type": "error", ...}` — non uno stato 4xx. Questo perché il proxy di `local_bridge.py` chiama `response.raise_for_status()` prima di inoltrare la risposta al widget, il che solleverebbe un'eccezione non gestita in caso di stato non-2xx.
+
 ---
 
 ## 2. REST — Endpoint di Amministrazione (Demone Locale)
