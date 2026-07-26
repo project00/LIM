@@ -2,7 +2,13 @@
             target_language = data_obj.get("target_language")
             translated_text = None
             if target_language:
-                translated_text = translate_text(text, str(target_language))
+                try:
+                    translated_text = translate_text(text, str(target_language))
+                except openai.OpenAIError as e:
+                    logger.error(
+                        f"Translation failed due to LLM provider error: {e}",
+                        exc_info=True
+                    )
 ```
 
 ```python
