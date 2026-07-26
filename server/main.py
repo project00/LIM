@@ -31,6 +31,7 @@ if not API_KEY:
 # Import the graph service and validation errors (will also validate LLM_MODEL is configured at startup)
 from services.graph_service import generate_concept_map  # noqa: E402
 from services.mermaid_validator import InvalidMermaidError  # noqa: E402
+from services.stt_service import transcribe_audio  # noqa: E402
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
@@ -143,6 +144,42 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
                 "action": "concept_map",
                 "message": str(e)
             }
+
+    elif action == "transcribe_audio":
+        data_obj = payload.get("data") or {}
+        audio_base64 = data_obj.get("audio_base64")
+        sample_rate = data_obj.get("sample_rate")
+        encoding = data_obj.get("encoding")
+
+        if not audio_base64 or sample_rate is None or not encoding:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Missing required fields ('audio_base64', 'sample_rate', 'encoding') "
+                    "inside 'data' for 'transcribe_audio' action"
+                )
+            )
+
+        try:
+            # Transcribe audio using the STT service
+            text = transcribe_audio(
+                audio_base64=audio_base64,
+                sample_rate=int(sample_rate),
+                encoding=str(encoding)
+            )
+
+            return {
+                "type": "transcription",
+                "source": "remote_stt",
+                "text": text,
+                "translated_text": None
+            }
+        except ValueError as e:
+            logger.warning("Validation error during audio transcription: %s", e)
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error("Internal error during audio transcription: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error during transcription")
 
     # Mirror back the payload with augmented metadata for non-implemented remote actions
     response_data = dict(payload)
