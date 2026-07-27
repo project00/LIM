@@ -19,7 +19,15 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 // Richiesta
 { "action": "sympy_math", "data": "2*x + 6 - 12" }
 // Risposta
-{ "type": "math", "source": "local_engine", "latex": "f(x) = 2x - 6" }
+{
+  "type": "math",
+  "source": "local_engine",
+  "latex": "f(x) = 2x - 6",
+  "plot_data": {
+    "x": [-10, -9.8, -9.6, "..."],
+    "y": [-26, -25.6, -25.2, "..."]
+  }
+}
 ```
 
 ### `fast_ocr` (Locale — vedi bug #2, non ancora implementato)

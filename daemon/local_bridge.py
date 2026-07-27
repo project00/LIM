@@ -56,16 +56,58 @@ class LocalEngine:
         try:
             expr = sp.sympify(expr_str)
             simplified = sp.simplify(expr)
+
+            # Retrieve free symbols
+            free_symbols = list(simplified.free_symbols)
+            plot_data = None
+
+            if len(free_symbols) == 1:
+                symbol = free_symbols[0]
+                try:
+                    f = sp.lambdify(symbol, simplified, "math")
+                    x_vals = []
+                    y_vals = []
+
+                    # Generate 101 points from -10 to 10 with step 0.2
+                    for i in range(101):
+                        x_val = -10.0 + i * 0.2
+                        x_val = round(x_val, 5)
+                        try:
+                            y_val = f(x_val)
+
+                            # Verify y_val is real and finite
+                            if isinstance(y_val, complex):
+                                continue
+                            import math
+                            if not math.isfinite(y_val):
+                                continue
+
+                            x_vals.append(float(x_val))
+                            y_vals.append(float(y_val))
+                        except Exception:
+                            # Skip points with evaluation errors
+                            continue
+
+                    if len(x_vals) > 0:
+                        plot_data = {
+                            "x": x_vals,
+                            "y": y_vals
+                        }
+                except Exception:
+                    plot_data = None
+
             return {
                 "type": "math",
                 "source": "local_engine",
                 "latex": f"f(x) = {sp.latex(simplified)}",
+                "plot_data": plot_data,
             }
         except Exception:
             return {
                 "type": "math",
                 "source": "local_engine",
                 "latex": r"\text{Errore parsing math locale}",
+                "plot_data": None,
             }
 
 
