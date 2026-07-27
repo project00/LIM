@@ -192,4 +192,3 @@ Risposta: stesso schema del tipo di messaggio corrispondente in §1 (es. `concep
 // Risposta
 { "status": "ok" }
 ```
-Sprint 6 in quattro pezzi — sintesi accumulata lato widget (unico componente che vede tutto), generazione via LLM (stesso pattern ormai collaudato), backup lato demone (indipendente dagli altri tre), export PDF (arriva per ultimo perché include il riassunto).
