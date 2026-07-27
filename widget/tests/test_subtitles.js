@@ -34,6 +34,10 @@ const mockElements = {
     'toast-banner': {
         innerText: '',
         style: { display: '' }
+    },
+    'subtitle-language': {
+        value: '',
+        disabled: false
     }
 };
 
@@ -145,6 +149,8 @@ function resetMocks() {
     mockElements['btn-subtitles'].style.background = '';
     mockElements['toast-banner'].innerText = '';
     mockElements['toast-banner'].style.display = 'none';
+    mockElements['subtitle-language'].value = '';
+    mockElements['subtitle-language'].disabled = false;
     lastTimeoutFn = null;
 
     // Clear final subtitles and interim subtitles inside context
@@ -314,6 +320,43 @@ setSystemState(SYSTEM_STATES.DEGRADED, "Local mode");
 
 assert.strictEqual(mockElements['subtitles-bar'].innerText, "Sottotitoli non disponibili: browser non supportato");
 console.log("✓ Test 10 Passed");
+
+// Test 11: Changing language while subtitles are active sends stop + start immediately
+console.log("Test 11: Changing language while subtitles are active restarts the transcription...");
+resetMocks();
+vm.runInContext('subtitlesActive = true', context);
+vm.runInContext('currentState = SYSTEM_STATES.ONLINE', context);
+mockElements['subtitle-language'].value = 'en';
+
+const handleLanguageChange = vm.runInContext('handleLanguageChange', context);
+handleLanguageChange();
+
+const ws11 = vm.runInContext('ws', context);
+assert.strictEqual(ws11.sentMessages.length, 2);
+assert.deepStrictEqual(ws11.sentMessages[0], {
+    action: 'stop_transcription'
+});
+assert.deepStrictEqual(ws11.sentMessages[1], {
+    action: 'start_transcription',
+    data: { target_language: 'en' }
+});
+console.log("✓ Test 11 Passed");
+
+
+// Test 12: Select is disabled on DEGRADED/OFFLINE state
+console.log("Test 12: Select is disabled in DEGRADED/OFFLINE states...");
+resetMocks();
+setSystemState(SYSTEM_STATES.DEGRADED, "Local mode");
+assert.strictEqual(mockElements['subtitle-language'].disabled, true);
+
+resetMocks();
+setSystemState(SYSTEM_STATES.OFFLINE, "Offline mode");
+assert.strictEqual(mockElements['subtitle-language'].disabled, true);
+
+resetMocks();
+setSystemState(SYSTEM_STATES.ONLINE, "Online mode");
+assert.strictEqual(mockElements['subtitle-language'].disabled, false);
+console.log("✓ Test 12 Passed");
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
 process.exit(0);
