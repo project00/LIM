@@ -154,6 +154,7 @@
         }
 
         function setSystemState(newState, message = "") {
+            const oldState = currentState;
             currentState = newState;
             const badge = document.getElementById("status-badge");
             badge.className = `status-badge ${newState.class}`;
@@ -166,7 +167,12 @@
                 btn.innerText = isDegradedOrOffline ? `${baseName} ☁️❌` : baseName;
             });
 
-            if (message) {
+            if (subtitlesActive && (oldState === SYSTEM_STATES.DEGRADED || oldState === SYSTEM_STATES.OFFLINE) && newState === SYSTEM_STATES.ONLINE) {
+                const toast = document.getElementById("toast-banner");
+                toast.innerText = "ℹ️ Sottotitoli: passaggio alla trascrizione cloud";
+                toast.style.display = "block";
+                setTimeout(() => { toast.style.display = "none"; }, 5000);
+            } else if (message) {
                 const toast = document.getElementById("toast-banner");
                 toast.innerText = `ℹ️ ${message}`;
                 toast.style.display = "block";
@@ -212,6 +218,8 @@
         let subtitlesActive = false;
         let finalSubtitles = [];
         let interimSubtitle = null;
+        let recognition = null;
+        let recognitionActive = false;
 
         function escapeHTML(str) {
             if (!str) return "";
@@ -223,18 +231,105 @@
                 .replace(/'/g, "&#039;");
         }
 
+        function startLocalSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                const bar = document.getElementById("subtitles-bar");
+                if (bar) {
+                    bar.innerText = "Sottotitoli non disponibili: browser non supportato";
+                }
+                return;
+            }
+
+            if (recognitionActive) {
+                return;
+            }
+
+            try {
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'it-IT';
+
+                recognition.onstart = () => {
+                    recognitionActive = true;
+                    updateSubtitlesDisplay();
+                };
+
+                recognition.onresult = (event) => {
+                    let interimTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        const result = event.results[i];
+                        if (result.isFinal) {
+                            const finalText = result[0].transcript.trim();
+                            if (finalText) {
+                                handleSubtitleMessage({
+                                    type: 'subtitle',
+                                    text: finalText,
+                                    is_final: true
+                                });
+                            }
+                        } else {
+                            interimTranscript += result[0].transcript;
+                        }
+                    }
+
+                    if (interimTranscript) {
+                        handleSubtitleMessage({
+                            type: 'subtitle',
+                            text: interimTranscript.trim(),
+                            is_final: false
+                        });
+                    } else if (event.results.length > 0 && event.results[event.results.length - 1].isFinal) {
+                        interimSubtitle = null;
+                        updateSubtitlesDisplay();
+                    }
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("SpeechRecognition error:", event.error);
+                };
+
+                recognition.onend = () => {
+                    if (recognitionActive && subtitlesActive && (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE)) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error("Failed to auto-restart SpeechRecognition:", e);
+                        }
+                    } else {
+                        recognitionActive = false;
+                        recognition = null;
+                    }
+                };
+
+                recognitionActive = true;
+                recognition.start();
+            } catch (err) {
+                console.error("Failed to start SpeechRecognition:", err);
+                recognitionActive = false;
+                recognition = null;
+            }
+        }
+
+        function stopLocalSpeechRecognition() {
+            recognitionActive = false;
+            if (recognition) {
+                try {
+                    recognition.stop();
+                } catch (e) {
+                    // Ignore
+                }
+                recognition = null;
+            }
+        }
+
         function toggleSubtitles() {
             subtitlesActive = !subtitlesActive;
             const btn = document.getElementById("btn-subtitles");
             const bar = document.getElementById("subtitles-bar");
             if (subtitlesActive) {
                 btn.style.background = "#a6e3a1"; // Green color
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        action: "start_transcription",
-                        data: { target_language: null }
-                    }));
-                }
                 checkSubtitleConnectionState();
             } else {
                 btn.style.background = "#89b4fa"; // Standard button color
@@ -243,6 +338,7 @@
                         action: "stop_transcription"
                     }));
                 }
+                stopLocalSpeechRecognition();
                 finalSubtitles = [];
                 interimSubtitle = null;
                 bar.innerText = "🎙️ Live STT: In attesa di input audio...";
@@ -254,17 +350,21 @@
             if (!bar) return;
             if (subtitlesActive) {
                 if (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE) {
-                    bar.innerText = "Sottotitoli non disponibili in modalità locale";
-
-                    const toast = document.getElementById("toast-banner");
-                    toast.innerText = "ℹ️ Sottotitoli non disponibili in modalità locale";
-                    toast.style.display = "block";
-                    setTimeout(() => { toast.style.display = "none"; }, 5000);
-                } else {
-                    if (bar.innerText === "Sottotitoli non disponibili in modalità locale") {
-                        bar.innerText = "🎙️ Live STT: In ascolto...";
-                        updateSubtitlesDisplay();
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SpeechRecognition) {
+                        bar.innerText = "Sottotitoli non disponibili: browser non supportato";
+                    } else {
+                        startLocalSpeechRecognition();
                     }
+                } else {
+                    stopLocalSpeechRecognition();
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            action: "start_transcription",
+                            data: { target_language: null }
+                        }));
+                    }
+                    updateSubtitlesDisplay();
                 }
             }
         }
@@ -290,11 +390,13 @@
             const bar = document.getElementById("subtitles-bar");
             if (!bar) return;
 
-            if (subtitlesActive && (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE)) {
+            if (!subtitlesActive) {
                 return;
             }
 
-            if (!subtitlesActive) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if ((currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE) && !SpeechRecognition) {
+                bar.innerText = "Sottotitoli non disponibili: browser non supportato";
                 return;
             }
 

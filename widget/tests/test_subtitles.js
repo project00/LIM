@@ -84,6 +84,27 @@ const mockSetInterval = () => {};
 
 let lastTimeoutFn = null;
 
+// Mock SpeechRecognition Class
+class MockSpeechRecognition {
+    constructor() {
+        MockSpeechRecognition.instance = this;
+        this.continuous = false;
+        this.interimResults = false;
+        this.lang = '';
+        this.started = false;
+        this.stopped = false;
+    }
+    start() {
+        this.started = true;
+        if (this.onstart) this.onstart();
+    }
+    stop() {
+        this.stopped = true;
+        if (this.onend) this.onend();
+    }
+}
+MockSpeechRecognition.instance = null;
+
 // Create an evaluation context
 const context = {
     document: documentMock,
@@ -98,6 +119,9 @@ const context = {
         }
     },
     console: console,
+    window: {
+        SpeechRecognition: MockSpeechRecognition
+    }
 };
 
 // Run script in the context
@@ -226,21 +250,70 @@ handleSubtitleMessage({
 assert.strictEqual(mockElements['subtitles-bar'].innerHTML, '<div>Buongiorno (Good morning)</div>');
 console.log("✓ Test 7 Passed");
 
-// Test 8: Connection is DEGRADED/OFFLINE while subtitles are active
-console.log("Test 8: Warning display on DEGRADED/OFFLINE state...");
+// Test 8: Connection is DEGRADED/OFFLINE while subtitles are active and SpeechRecognition is supported
+console.log("Test 8: SpeechRecognition fallback starts in DEGRADED/OFFLINE...");
 resetMocks();
+context.window.SpeechRecognition = MockSpeechRecognition;
 vm.runInContext('subtitlesActive = true', context);
-setSystemState(SYSTEM_STATES.DEGRADED, "Falling back to local");
-assert.strictEqual(mockElements['subtitles-bar'].innerText, "Sottotitoli non disponibili in modalità locale");
-assert.strictEqual(mockElements['toast-banner'].innerText, "ℹ️ Sottotitoli non disponibili in modalità locale");
-assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+setSystemState(SYSTEM_STATES.DEGRADED, "Local Mode active");
 
-// Trigger timeout to verify it gets hidden
-if (lastTimeoutFn) {
-    lastTimeoutFn();
-    assert.strictEqual(mockElements['toast-banner'].style.display, "none");
-}
+// Ensure MockSpeechRecognition was instantiated and started
+const recognitionInstance = MockSpeechRecognition.instance;
+assert.notStrictEqual(recognitionInstance, null);
+assert.strictEqual(recognitionInstance.started, true);
+assert.strictEqual(vm.runInContext('recognitionActive', context), true);
+
+// Trigger a mock SpeechRecognition onresult event
+const mockEvent = {
+    resultIndex: 0,
+    results: [
+        {
+            isFinal: false,
+            0: { transcript: "Buongiorno a tutti" }
+        }
+    ]
+};
+recognitionInstance.onresult(mockEvent);
+assert.strictEqual(mockElements['subtitles-bar'].innerHTML, '<div><i>Buongiorno a tutti</i></div>');
+
+// Trigger a final result
+const mockEventFinal = {
+    resultIndex: 0,
+    results: [
+        {
+            isFinal: true,
+            0: { transcript: "Buongiorno a tutti" }
+        }
+    ]
+};
+recognitionInstance.onresult(mockEventFinal);
+assert.strictEqual(mockElements['subtitles-bar'].innerHTML, '<div>Buongiorno a tutti</div>');
 console.log("✓ Test 8 Passed");
+
+
+// Test 9: Transition DEGRADED/OFFLINE -> ONLINE stops SpeechRecognition and shows Cloud banner
+console.log("Test 9: Transitioning back to ONLINE stops local STT and displays Toast banner...");
+setSystemState(SYSTEM_STATES.ONLINE, "Cloud mode online");
+
+// Ensure recognition was stopped
+assert.strictEqual(recognitionInstance.stopped, true);
+assert.strictEqual(vm.runInContext('recognitionActive', context), false);
+
+// Check that toast was shown with transition text
+assert.strictEqual(mockElements['toast-banner'].innerText, "ℹ️ Sottotitoli: passaggio alla trascrizione cloud");
+assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+console.log("✓ Test 9 Passed");
+
+
+// Test 10: If window.SpeechRecognition is not supported, show browser unsupported message
+console.log("Test 10: Unsupported browser shows error message...");
+resetMocks();
+delete context.window.SpeechRecognition;
+vm.runInContext('subtitlesActive = true', context);
+setSystemState(SYSTEM_STATES.DEGRADED, "Local mode");
+
+assert.strictEqual(mockElements['subtitles-bar'].innerText, "Sottotitoli non disponibili: browser non supportato");
+console.log("✓ Test 10 Passed");
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
 process.exit(0);
