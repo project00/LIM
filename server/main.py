@@ -36,12 +36,18 @@ from services.stt_service import transcribe_audio  # noqa: E402
 from services.translate_service import translate_text  # noqa: E402
 from services.quiz_service import generate_quiz  # noqa: E402
 from services.quiz_validator import InvalidQuizError  # noqa: E402
+from services.model_service import search_and_fetch_3d_model  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
     description="Mock remote server for development verification and API routing with authentication",
     version="1.0.0"
 )
+
+# Serve the persistent local 3D models directory under /models
+os.makedirs("model_cache", exist_ok=True)
+app.mount("/models", StaticFiles(directory="model_cache"), name="models")
 
 
 async def verify_api_key(authorization: str = Header(default=None)) -> None:
@@ -147,6 +153,41 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "concept_map",
                 "message": str(e)
+            }
+
+    elif action == "load_3d_model":
+        data_obj = payload.get("data") or {}
+        query = data_obj.get("query")
+        if not query:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'query' field inside 'data' for 'load_3d_model' action"
+            )
+
+        try:
+            model_metadata = search_and_fetch_3d_model(query)
+            return {
+                "type": "model_3d",
+                "source": "remote_index",
+                "model_url": model_metadata["model_url"],
+                "label": model_metadata["title"],
+                "attribution": model_metadata["attribution"]
+            }
+        except ValueError as e:
+            logger.warning("3D model not found for query '%s': %s", query, e)
+            return {
+                "type": "error",
+                "code": "MODEL_NOT_FOUND",
+                "action": "load_3d_model",
+                "message": str(e)
+            }
+        except Exception as e:
+            logger.error("Sketchfab download or service error: %s", e, exc_info=True)
+            return {
+                "type": "error",
+                "code": "REMOTE_SERVICE_ERROR",
+                "action": "load_3d_model",
+                "message": f"Errore del servizio Sketchfab o download fallito: {str(e)}"
             }
 
     elif action == "generate_quiz":
