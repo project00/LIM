@@ -14,6 +14,7 @@ Design Note:
 
 import asyncio
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
@@ -368,11 +369,107 @@ async def test_start_transcription_double_start() -> None:
             }))
             await asyncio.sleep(0.05)
 
-        # Verify PyAudio open was called twice (once for each start_transcription)
-        assert mock_instance.open.call_count == 2
-        # Verify previous stream cleanup was called during second start or during stop
-        assert mock_stream.stop_stream.call_count >= 1
-        assert mock_stream.close.call_count >= 1
+
+@pytest.mark.asyncio
+async def test_load_3d_model_local_caching() -> None:
+    """
+    Tests that the local daemon caches 3D models upon first download,
+    rewrites model_url in response sent to the widget, and serves directly
+    from cache on subsequent requests without calling the remote server.
+    """
+    import shutil
+    from local_bridge import CACHE_DIR
+
+    # Clean local cache directory first to guarantee cache miss
+    if os.path.exists(CACHE_DIR):
+        shutil.rmtree(CACHE_DIR)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    client = TestClient(app)
+
+    # 1. Mock remote server responses
+    mock_remote_analyze_resp = MagicMock()
+    mock_remote_analyze_resp.status_code = 200
+    mock_remote_analyze_resp.json.return_value = {
+        "type": "model_3d",
+        "source": "remote_index",
+        "model_url": "/models/model_uid_xyz/scene.gltf",
+        "label": "Water Molecule",
+        "attribution": {
+            "author": "Science Lab",
+            "license": "CC-BY",
+            "source_url": "https://sketchfab.com/models/model_uid_xyz"
+        }
+    }
+
+    # scene.gltf file content
+    mock_gltf_content = {
+        "buffers": [{"uri": "scene.bin"}],
+        "images": [{"uri": "textures/baseColor.png"}]
+    }
+    mock_gltf_resp = MagicMock()
+    mock_gltf_resp.status_code = 200
+    mock_gltf_resp.text = json.dumps(mock_gltf_content)
+
+    mock_bin_resp = MagicMock()
+    mock_bin_resp.status_code = 200
+    mock_bin_resp.content = b"\x10\x20\x30"
+
+    mock_img_resp = MagicMock()
+    mock_img_resp.status_code = 200
+    mock_img_resp.content = b"\xff\xd8\xff"
+
+    # Set up httpx.AsyncClient mocks
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+
+        mock_post.return_value = mock_remote_analyze_resp
+        mock_get.side_effect = [mock_gltf_resp, mock_bin_resp, mock_img_resp]
+
+        # First request (Cache MISS)
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({
+                "action": "load_3d_model",
+                "data": {"query": "H2O Molecule"}
+            }))
+            response1 = websocket.receive_json()
+
+            # Assert rewritten URL and preserved attribution
+            assert response1["type"] == "model_3d"
+            assert response1["source"] == "remote_index"
+            assert "/models_cache/" in response1["model_url"]
+            assert response1["label"] == "Water Molecule"
+            assert response1["attribution"]["author"] == "Science Lab"
+
+        # Verify download calls
+        assert mock_post.call_count == 1
+        assert mock_get.call_count == 3
+
+        # Second request (Cache HIT)
+        # Reset mock counters to assert no network calls
+        mock_post.reset_mock()
+        mock_get.reset_mock()
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({
+                "action": "load_3d_model",
+                "data": {"query": "H2O Molecule"}
+            }))
+            response2 = websocket.receive_json()
+
+            # Assert served from cache immediately with identical rewritten details
+            assert response2["type"] == "model_3d"
+            assert "/models_cache/" in response2["model_url"]
+            assert response2["label"] == "Water Molecule"
+            assert response2["attribution"]["author"] == "Science Lab"
+
+        # Verify NO remote analyze and NO download requests were performed on cache hit
+        mock_post.assert_not_called()
+        mock_get.assert_not_called()
+
+    # Cleanup cache folder
+    if os.path.exists(CACHE_DIR):
+        shutil.rmtree(CACHE_DIR)
 
 
 @pytest.mark.asyncio

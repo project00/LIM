@@ -8,6 +8,9 @@ from mss import mss
 from PIL import Image
 import sympy as sp
 import pytesseract
+import hashlib
+import os
+from fastapi.staticfiles import StaticFiles
 
 # Import the configuration settings and routes router dynamically
 from settings_api import settings, router as settings_router
@@ -23,6 +26,10 @@ app = FastAPI(title="LIM AI Local Daemon Bridge")
 
 # Include the administrative and setup settings endpoints as specified
 app.include_router(settings_router)
+
+# Serve local 3D models cache under /models_cache
+os.makedirs("model_cache", exist_ok=True)
+app.mount("/models_cache", StaticFiles(directory="model_cache"), name="models_cache")
 
 
 class RouteTarget(Enum):
@@ -46,6 +53,122 @@ class ModelRouter:
     @classmethod
     def get_target(cls, action: str) -> RouteTarget:
         return cls.ROUTING_TABLE.get(action, RouteTarget.REMOTE)
+
+
+CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "model_cache"))
+
+
+async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, payload: dict) -> dict:
+    """
+    Handles loading a 3D model with local caching on the daemon.
+    Checks the local cache first by hashing the query. If a hit occurs, serves it immediately.
+    On a miss, fetches from the remote server, downloads any external assets, caches them,
+    and returns the local file URL path.
+    """
+    q_clean = query.lower().strip()
+    cache_key = hashlib.sha256(q_clean.encode("utf-8")).hexdigest()
+    model_dir = os.path.join(CACHE_DIR, cache_key)
+    metadata_file = os.path.join(model_dir, "metadata.json")
+    gltf_file = os.path.join(model_dir, "scene.gltf")
+
+    # Cache HIT
+    if os.path.exists(metadata_file) and os.path.exists(gltf_file):
+        logger.info("Local Daemon Cache HIT for 3D model query: '%s'", query)
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            return {
+                "type": "model_3d",
+                "source": "remote_index",
+                "model_url": f"/models_cache/{cache_key}/scene.gltf",
+                "label": metadata["title"],
+                "attribution": metadata["attribution"]
+            }
+        except Exception as e:
+            logger.error("Failed to read metadata.json from local cache: %s", e)
+
+    # Cache MISS
+    logger.info("Local Daemon Cache MISS for 3D model query: '%s'", query)
+
+    remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+    headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+
+    response = await http_client.post(remote_analyze_url, json=payload, headers=headers)
+    response.raise_for_status()
+    response_data = response.json()
+
+    if response_data.get("type") == "error":
+        return response_data
+
+    remote_model_url = response_data.get("model_url")
+    if not remote_model_url:
+        return response_data
+
+    # Extract base remote model folder
+    parts = remote_model_url.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "models":
+        uid = parts[1]
+        remote_base = f"/models/{uid}"
+    else:
+        remote_base = os.path.dirname(remote_model_url)
+
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Download scene.gltf
+    gltf_url = f"{settings.remote_base_url}{remote_model_url}"
+    gltf_resp = await http_client.get(gltf_url, headers=headers)
+    gltf_resp.raise_for_status()
+    gltf_text = gltf_resp.text
+
+    with open(gltf_file, "w", encoding="utf-8") as f:
+        f.write(gltf_text)
+
+    # Parse and download dependent assets
+    try:
+        gltf_json = json.loads(gltf_text)
+        dependent_uris = []
+
+        for buf in gltf_json.get("buffers", []):
+            uri = buf.get("uri")
+            if uri and not uri.startswith("data:"):
+                dependent_uris.append(uri)
+
+        for img in gltf_json.get("images", []):
+            uri = img.get("uri")
+            if uri and not uri.startswith("data:"):
+                dependent_uris.append(uri)
+
+        for uri in dependent_uris:
+            local_uri_path = os.path.join(model_dir, uri)
+            os.makedirs(os.path.dirname(local_uri_path), exist_ok=True)
+
+            remote_uri_url = f"{settings.remote_base_url}{remote_base}/{uri}"
+            uri_resp = await http_client.get(remote_uri_url, headers=headers)
+            uri_resp.raise_for_status()
+
+            with open(local_uri_path, "wb") as f:
+                f.write(uri_resp.content)
+            logger.info("Daemon cached dependent resource: '%s'", uri)
+
+    except Exception as e:
+        logger.error("Failed to cache dependent assets for model %s: %s", query, e)
+
+    # Save metadata
+    metadata = {
+        "uid": response_data.get("uid", cache_key),
+        "title": response_data.get("label", query),
+        "attribution": response_data.get("attribution", {})
+    }
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=4)
+
+    return {
+        "type": "model_3d",
+        "source": "remote_index",
+        "model_url": f"/models_cache/{cache_key}/scene.gltf",
+        "label": metadata["title"],
+        "attribution": metadata["attribution"]
+    }
 
 
 class LocalEngine:
@@ -402,6 +525,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
                     try:
+                        if action == "load_3d_model":
+                            query = payload.get("data", {}).get("query")
+                            if query:
+                                res_metadata = await handle_load_3d_model(query, http_client, payload)
+                                await websocket.send_text(json.dumps(res_metadata))
+                                continue
+
                         # Construct remote analyze URL dynamically
                         remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
                         response = await http_client.post(
