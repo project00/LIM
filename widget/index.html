@@ -12,6 +12,10 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <!-- Model-Viewer per Oggetti 3D -->
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.1.1/model-viewer.min.js"></script>
+    <!-- html2canvas per PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- jsPDF per PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
         @font-face {
@@ -63,6 +67,7 @@
         <button class="remote-only" data-name="🧊 3D Model" onclick="requestAction('load_3d_model')">🧊 3D Model</button>
         <button class="remote-only" data-name="❓ Quiz" onclick="requestAction('generate_quiz')">❓ Quiz</button>
         <button class="remote-only" data-name="📋 Riassumi Lezione" onclick="triggerSummary()">📋 Riassumi Lezione</button>
+        <button onclick="exportToPDF()">📄 Esporta PDF</button>
         <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
         <select id="subtitle-language" onchange="handleLanguageChange()">
             <option value="">Nessuna traduzione</option>
@@ -91,6 +96,8 @@
         let ws = null;
         let reconnectTimeoutId = null;
         let lessonLog = [];
+        let lastGeneratedSummary = "";
+        const sessionStartTime = new Date();
 
         function connectWebSocket() {
             // Avoid creating overlapping WebSocket connections
@@ -203,6 +210,7 @@
 
             if (data.type === "summary") {
                 const text = data.text || data.summary || "";
+                lastGeneratedSummary = text;
                 const normalizedText = text.replace(/\r\n/g, "\n");
                 const paragraphs = normalizedText.split("\n\n");
                 let html = "";
@@ -397,6 +405,136 @@
                     data: { lesson_log: lessonLog }
                 }));
             }
+        }
+
+        function formatSessionFilename() {
+            const pad = (num) => String(num).padStart(2, '0');
+            const yyyy = sessionStartTime.getFullYear();
+            const mm = pad(sessionStartTime.getMonth() + 1);
+            const dd = pad(sessionStartTime.getDate());
+            const hh = pad(sessionStartTime.getHours());
+            const min = pad(sessionStartTime.getMinutes());
+            return `lezione_${yyyy}-${mm}-${dd}_${hh}${min}.pdf`;
+        }
+
+        async function exportToPDF() {
+            if (!window.html2canvas || !window.jspdf) {
+                const toast = document.getElementById("toast-banner");
+                toast.innerText = "Errore: Impossibile esportare il PDF. Le librerie html2canvas o jsPDF non sono state caricate (connessione CDN assente o bloccata).";
+                toast.style.display = "block";
+                setTimeout(() => { toast.style.display = "none"; }, 5000);
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const html2canvas = window.html2canvas;
+            const doc = new jsPDF();
+            let currentY = 15;
+
+            // Header Title
+            doc.setFont("Helvetica", "bold");
+            doc.setFontSize(16);
+            doc.text("AI LIM Copilot — Report Lezione", 15, currentY);
+            currentY += 10;
+
+            // Log lessonStartTime
+            doc.setFont("Helvetica", "normal");
+            doc.setFontSize(10);
+            doc.text(`Inizio Sessione: ${sessionStartTime.toLocaleString('it-IT')}`, 15, currentY);
+            currentY += 10;
+
+            // 1. Render the current lessonLog as a simple text section at the top of the PDF.
+            doc.setFont("Helvetica", "bold");
+            doc.setFontSize(12);
+            doc.text("Registro Attività (Lesson Log):", 15, currentY);
+            currentY += 6;
+
+            doc.setFont("Helvetica", "normal");
+            doc.setFontSize(10);
+            if (lessonLog.length === 0) {
+                doc.text("Nessuna attività registrata in questa sessione.", 15, currentY);
+                currentY += 6;
+            } else {
+                lessonLog.forEach(entry => {
+                    const timeStr = new Date(entry.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const typeStr = entry.type.toUpperCase();
+                    const textLine = `[${timeStr}] [${typeStr}] ${entry.content}`;
+
+                    const splitLines = doc.splitTextToSize(textLine, 180);
+                    splitLines.forEach(line => {
+                        if (currentY > 280) {
+                            doc.addPage();
+                            currentY = 15;
+                        }
+                        doc.text(line, 15, currentY);
+                        currentY += 5;
+                    });
+                });
+                currentY += 5;
+            }
+
+            // 2. If a summary was already generated, include its full text.
+            if (lastGeneratedSummary) {
+                if (currentY > 250) {
+                    doc.addPage();
+                    currentY = 15;
+                }
+                doc.setFont("Helvetica", "bold");
+                doc.setFontSize(12);
+                doc.text("Sintesi della Lezione:", 15, currentY);
+                currentY += 6;
+
+                doc.setFont("Helvetica", "normal");
+                doc.setFontSize(10);
+
+                const summaryParagraphs = lastGeneratedSummary.split("\n\n");
+                summaryParagraphs.forEach(para => {
+                    const splitSummary = doc.splitTextToSize(para.trim(), 180);
+                    splitSummary.forEach(line => {
+                        if (currentY > 280) {
+                            doc.addPage();
+                            currentY = 15;
+                        }
+                        doc.text(line, 15, currentY);
+                        currentY += 5;
+                    });
+                    currentY += 4;
+                });
+                currentY += 5;
+            }
+
+            // 3. Capture #output-container using html2canvas
+            const container = document.getElementById("output-container");
+            if (container) {
+                try {
+                    const canvas = await html2canvas(container, {
+                        useCORS: true,
+                        allowTaint: true,
+                        scale: 2
+                    });
+                    const imgData = canvas.toDataURL("image/png");
+
+                    if (currentY > 180) {
+                        doc.addPage();
+                        currentY = 15;
+                    }
+
+                    doc.setFont("Helvetica", "bold");
+                    doc.setFontSize(12);
+                    doc.text("Visualizzazione Attuale della Lavagna:", 15, currentY);
+                    currentY += 6;
+
+                    const imgWidth = 180;
+                    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+                    doc.addImage(imgData, "PNG", 15, currentY, imgWidth, imgHeight);
+                } catch (e) {
+                    console.error("html2canvas capture failed: ", e);
+                }
+            }
+
+            // Save PDF
+            doc.save(formatSessionFilename());
         }
 
         function toggleDSA() {
