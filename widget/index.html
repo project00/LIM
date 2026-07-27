@@ -264,7 +264,24 @@
                 out.innerHTML = `<pre class="mermaid">${data.mermaid_code}</pre>`;
                 mermaid.run();
             } else if (data.type === "model_3d") {
-                out.innerHTML = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
+                let html = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
+
+                if (data.attribution) {
+                    const author = escapeHTML(data.attribution.author || "Autore sconosciuto");
+                    const license = escapeHTML(data.attribution.license || "Licenza sconosciuta");
+                    const url = data.attribution.source_url ? escapeHTML(data.attribution.source_url) : "";
+
+                    html += `<div style="font-size: 11px; color: #a6adc8; margin-top: 6px; text-align: center;">`;
+                    if (url) {
+                        html += `Modello: <a href="${url}" target="_blank" style="color: #89b4fa; text-decoration: none; font-weight: bold;">${escapeHTML(data.label || "Modello 3D")}</a>`;
+                    } else {
+                        html += `Modello: <b>${escapeHTML(data.label || "Modello 3D")}</b>`;
+                    }
+                    html += ` | Autore: <i>${author}</i> | Licenza: <span style="color: #f9e2af;">${license}</span>`;
+                    html += `</div>`;
+                }
+
+                out.innerHTML = html;
             } else if (data.type === "quiz") {
                 const correctIndices = data.questions.map(q => q.correct_index);
 
