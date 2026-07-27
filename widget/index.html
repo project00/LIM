@@ -206,14 +206,65 @@
             } else if (data.type === "model_3d") {
                 out.innerHTML = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
             } else if (data.type === "quiz") {
+                const correctIndices = data.questions.map(q => q.correct_index);
+
                 let html = "<b>Quiz di Verifica Rapida</b><hr>";
                 data.questions.forEach((q, i) => {
                     html += `<p><b>${i+1}. ${q.question}</b></p>`;
-                    q.options.forEach(opt => {
-                        html += `<label><input type="radio" name="q${i}"> ${opt}</label><br>`;
+                    html += `<div class="quiz-question" id="quiz-q-${i}">`;
+                    q.options.forEach((opt, j) => {
+                        html += `<label id="quiz-q-${i}-lbl-${j}"><input type="radio" name="q${i}" value="${j}"> ${escapeHTML(opt)}</label><br>`;
                     });
+                    html += `</div>`;
                 });
+
                 out.innerHTML = html;
+
+                // Add button below the quiz
+                const btnVerifica = document.createElement("button");
+                btnVerifica.id = "btn-verify-quiz";
+                btnVerifica.innerText = "📐 Verifica Risposte";
+                btnVerifica.style.marginTop = "12px";
+                btnVerifica.onclick = () => {
+                    // Disable all radios
+                    out.querySelectorAll("input[type='radio']").forEach(radio => {
+                        radio.disabled = true;
+                    });
+                    btnVerifica.disabled = true;
+
+                    // Verify answers
+                    correctIndices.forEach((correctIdx, i) => {
+                        const radios = out.querySelectorAll(`input[name="q${i}"]`);
+                        let selectedIdx = -1;
+                        radios.forEach((radio, rIdx) => {
+                            if (radio.checked) {
+                                selectedIdx = rIdx;
+                            }
+                        });
+
+                        radios.forEach((radio, rIdx) => {
+                            const lbl = document.getElementById(`quiz-q-${i}-lbl-${rIdx}`);
+                            if (!lbl) return;
+                            if (rIdx === correctIdx) {
+                                // Mark correct option in green
+                                lbl.style.backgroundColor = "rgba(166, 227, 161, 0.3)";
+                                lbl.style.color = "#a6e3a1";
+                                lbl.style.fontWeight = "bold";
+                                lbl.style.borderRadius = "4px";
+                                lbl.style.padding = "2px 6px";
+                                lbl.style.display = "inline-block";
+                            } else if (rIdx === selectedIdx) {
+                                // Student picked wrong option - mark in red
+                                lbl.style.backgroundColor = "rgba(243, 139, 168, 0.3)";
+                                lbl.style.color = "#f38ba8";
+                                lbl.style.borderRadius = "4px";
+                                lbl.style.padding = "2px 6px";
+                                lbl.style.display = "inline-block";
+                            }
+                        });
+                    });
+                };
+                out.appendChild(btnVerifica);
             }
         }
 

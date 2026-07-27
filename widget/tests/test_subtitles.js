@@ -59,6 +59,14 @@ const documentMock = {
         classList: {
             toggle: (className) => {}
         }
+    },
+    createElement: (tagName) => {
+        return {
+            id: '',
+            style: {},
+            innerText: '',
+            onclick: null
+        };
     }
 };
 
@@ -357,6 +365,85 @@ resetMocks();
 setSystemState(SYSTEM_STATES.ONLINE, "Online mode");
 assert.strictEqual(mockElements['subtitle-language'].disabled, false);
 console.log("✓ Test 12 Passed");
+
+
+// Test 13: Interactive Quiz Verification
+console.log("Test 13: Interactive Quiz Verification...");
+resetMocks();
+const renderData = vm.runInContext('renderData', context);
+const testQuizData = {
+    type: "quiz",
+    questions: [
+        {
+            question: "What is 2+2?",
+            options: ["3", "4", "5"],
+            correct_index: 1
+        }
+    ]
+};
+
+// Mock output container
+const mockOutputElement = {
+    innerHTML: '',
+    querySelectorAll: (selector) => {
+        // We'll return mock objects for inputs
+        if (selector === "input[type='radio']") {
+            return mockRadios;
+        }
+        if (selector === 'input[name="q0"]') {
+            return mockRadios;
+        }
+        return [];
+    },
+    appendChild: (child) => {
+        mockOutputElement.appendedChild = child;
+    }
+};
+
+const mockRadios = [
+    { checked: false, disabled: false },
+    { checked: true, disabled: false },
+    { checked: false, disabled: false }
+];
+
+const mockLabels = [
+    { id: 'quiz-q-0-lbl-0', style: {} },
+    { id: 'quiz-q-0-lbl-1', style: {} },
+    { id: 'quiz-q-0-lbl-2', style: {} }
+];
+
+// Stub document.getElementById to return our labels and output element
+const originalGetElementById = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "output") return mockOutputElement;
+    if (id.startsWith("quiz-q-0-lbl-")) {
+        const idx = parseInt(id.split("-").pop());
+        return mockLabels[idx];
+    }
+    return originalGetElementById(id);
+};
+
+renderData(testQuizData);
+
+// Assert the quiz verification button was created and appended
+assert.notStrictEqual(mockOutputElement.appendedChild, undefined);
+assert.strictEqual(mockOutputElement.appendedChild.id, "btn-verify-quiz");
+
+// Trigger verification click
+mockOutputElement.appendedChild.onclick();
+
+// Assert inputs are disabled
+mockRadios.forEach(r => assert.strictEqual(r.disabled, true));
+assert.strictEqual(mockOutputElement.appendedChild.disabled, true);
+
+// Assert correct option is marked green (index 1 is correct)
+assert.strictEqual(mockLabels[1].style.backgroundColor, "rgba(166, 227, 161, 0.3)");
+assert.strictEqual(mockLabels[1].style.color, "#a6e3a1");
+
+// Restore original stub
+documentMock.getElementById = originalGetElementById;
+console.log("✓ Test 13 Passed");
+
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
 process.exit(0);
