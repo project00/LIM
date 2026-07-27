@@ -55,12 +55,12 @@ def test_analyze_unauthorized_when_token_incorrect() -> None:
 def test_analyze_authorized_when_token_matches_mock_action() -> None:
     """Tests that POST /api/v1/analyze succeeds and returns mock echo when token is valid (for other actions)."""
     client = TestClient(app)
-    payload = {"action": "load_3d_model", "data": {"query": "H2O"}}
+    payload = {"action": "non_implemented_action_123", "data": {"query": "H2O"}}
     headers = {"Authorization": "Bearer test_secret_token"}
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["source"] == "mock_server"
-    assert resp.json()["action"] == "load_3d_model"
+    assert resp.json()["action"] == "non_implemented_action_123"
 
 
 @patch("litellm.completion")

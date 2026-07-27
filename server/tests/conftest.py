@@ -17,6 +17,7 @@ os.environ["LLM_MODEL"] = "gpt-4o-mini"
 os.environ["LLM_API_KEY"] = "test_provider_key"
 os.environ["WHISPER_MODEL_SIZE"] = "tiny"
 os.environ["WHISPER_DEVICE"] = "cpu"
+os.environ["SKETCHFAB_ACCESS_TOKEN"] = "test_sketchfab_token"
 
 # Globally patch the WhisperModel class
 whisper_patcher = patch("faster_whisper.WhisperModel")
