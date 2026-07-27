@@ -36,11 +36,11 @@
         #subtitles-bar { background: rgba(0,0,0,0.6); color: #a6e3a1; padding: 8px; border-radius: 6px; font-size: 13px; min-height: 22px; margin-bottom: 10px; border: 1px solid #45475a; max-height: 80px; overflow-y: auto; }
 
         /* Toolbar e Bottoni */
-        .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-        button { padding: 8px 10px; background: #89b4fa; border: none; border-radius: 6px; color: #11111b; font-weight: bold; cursor: pointer; font-size: 12px; }
+        .toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+        button, select { padding: 8px 10px; background: #89b4fa; border: none; border-radius: 6px; color: #11111b; font-weight: bold; cursor: pointer; font-size: 12px; height: 32px; box-sizing: border-box; }
         button:active { background: #b4befe; }
         button.dsa { background: #f9e2af; color: #11111b; }
-        button:disabled { background-color: #45475a !important; color: #a6adc8 !important; cursor: not-allowed; opacity: 0.6; }
+        button:disabled, select:disabled { background-color: #45475a !important; color: #a6adc8 !important; cursor: not-allowed; opacity: 0.6; }
 
         /* Content Display Area */
         #output-container { background: #181825; padding: 10px; border-radius: 8px; border: 1px solid #313244; min-height: 320px; max-height: 420px; overflow-y: auto; }
@@ -63,6 +63,13 @@
         <button class="remote-only" data-name="🧊 3D Model" onclick="requestAction('load_3d_model')">🧊 3D Model</button>
         <button class="remote-only" data-name="❓ Quiz" onclick="requestAction('generate_quiz')">❓ Quiz</button>
         <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
+        <select id="subtitle-language" onchange="handleLanguageChange()">
+            <option value="">Nessuna traduzione</option>
+            <option value="en">Inglese</option>
+            <option value="fr">Francese</option>
+            <option value="de">Tedesco</option>
+            <option value="es">Spagnolo</option>
+        </select>
         <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
     </div>
 
@@ -102,7 +109,7 @@
                 if (subtitlesActive) {
                     ws.send(JSON.stringify({
                         action: "start_transcription",
-                        data: { target_language: null }
+                        data: { target_language: getSubtitleLanguage() }
                     }));
                 }
             };
@@ -167,6 +174,11 @@
                 btn.innerText = isDegradedOrOffline ? `${baseName} ☁️❌` : baseName;
             });
 
+            const selectEl = document.getElementById("subtitle-language");
+            if (selectEl) {
+                selectEl.disabled = isDegradedOrOffline;
+            }
+
             if (subtitlesActive && (oldState === SYSTEM_STATES.DEGRADED || oldState === SYSTEM_STATES.OFFLINE) && newState === SYSTEM_STATES.ONLINE) {
                 const toast = document.getElementById("toast-banner");
                 toast.innerText = "ℹ️ Sottotitoli: passaggio alla trascrizione cloud";
@@ -220,6 +232,26 @@
         let interimSubtitle = null;
         let recognition = null;
         let recognitionActive = false;
+
+        function getSubtitleLanguage() {
+            const selectEl = document.getElementById("subtitle-language");
+            if (!selectEl) return null;
+            return selectEl.value || null;
+        }
+
+        function handleLanguageChange() {
+            if (subtitlesActive && currentState === SYSTEM_STATES.ONLINE) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: "stop_transcription"
+                    }));
+                    ws.send(JSON.stringify({
+                        action: "start_transcription",
+                        data: { target_language: getSubtitleLanguage() }
+                    }));
+                }
+            }
+        }
 
         function escapeHTML(str) {
             if (!str) return "";
@@ -348,8 +380,15 @@
         function checkSubtitleConnectionState() {
             const bar = document.getElementById("subtitles-bar");
             if (!bar) return;
+
+            const selectEl = document.getElementById("subtitle-language");
+            const isDegradedOrOffline = (currentState !== SYSTEM_STATES.ONLINE);
+            if (selectEl) {
+                selectEl.disabled = isDegradedOrOffline;
+            }
+
             if (subtitlesActive) {
-                if (currentState === SYSTEM_STATES.DEGRADED || currentState === SYSTEM_STATES.OFFLINE) {
+                if (isDegradedOrOffline) {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                     if (!SpeechRecognition) {
                         bar.innerText = "Sottotitoli non disponibili: browser non supportato";
@@ -361,7 +400,7 @@
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({
                             action: "start_transcription",
-                            data: { target_language: null }
+                            data: { target_language: getSubtitleLanguage() }
                         }));
                     }
                     updateSubtitlesDisplay();
