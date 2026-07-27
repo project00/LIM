@@ -185,6 +185,7 @@ function resetMocks() {
     vm.runInContext('interimSubtitle = null', context);
     vm.runInContext('subtitlesActive = false', context);
     vm.runInContext('currentState = SYSTEM_STATES.ONLINE', context);
+    vm.runInContext('lessonLog = []', context);
 
     const wsInstance = vm.runInContext('ws', context);
     if (wsInstance) {
@@ -556,6 +557,154 @@ assert.strictEqual(mockLabels[1].style.color, "#a6e3a1");
 // Restore original stub
 documentMock.getElementById = originalGetElementById;
 console.log("✓ Test 13 Passed");
+
+
+// Test 16: lessonLog Accumulation
+console.log("Test 16: lessonLog Accumulation...");
+resetMocks();
+
+const mockLogOut = {
+    innerHTML: '',
+    appendChild: (child) => {
+        mockLogOut.appendedChildren = mockLogOut.appendedChildren || [];
+        mockLogOut.appendedChildren.push(child);
+    },
+    querySelectorAll: (selector) => {
+        return [];
+    }
+};
+
+const originalGetElementByIdLog = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "output") return mockLogOut;
+    return originalGetElementByIdLog(id);
+};
+
+// 1. Log subtitle (is_final === true)
+vm.runInContext('subtitlesActive = true', context);
+handleSubtitleMessage({
+    type: 'subtitle',
+    text: 'Buongiorno a tutti',
+    is_final: true
+});
+
+// 2. Log math render
+const testMathLog = {
+    type: "math",
+    latex: "f(x) = x^2"
+};
+const renderDataLog = vm.runInContext('renderData', context);
+renderDataLog(testMathLog);
+
+// 3. Log concept_map render
+const testConceptLog = {
+    type: "concept_map",
+    mermaid_code: "graph TD; A-->B"
+};
+renderDataLog(testConceptLog);
+
+// 4. Log quiz render
+const testQuizLog = {
+    type: "quiz",
+    questions: [
+        { question: "Domanda 1", options: ["A", "B"], correct_index: 0 }
+    ]
+};
+renderDataLog(testQuizLog);
+
+documentMock.getElementById = originalGetElementByIdLog;
+
+// Verify lessonLog entries inside VM
+const currentLog = vm.runInContext('lessonLog', context);
+assert.strictEqual(currentLog.length, 4);
+
+assert.strictEqual(currentLog[0].type, 'subtitle');
+assert.strictEqual(currentLog[0].content, 'Buongiorno a tutti');
+assert.ok(currentLog[0].timestamp);
+
+assert.strictEqual(currentLog[1].type, 'math');
+assert.strictEqual(currentLog[1].content, 'Espressione matematica: f(x) = x^2');
+assert.ok(currentLog[1].timestamp);
+
+assert.strictEqual(currentLog[2].type, 'concept_map');
+assert.strictEqual(currentLog[2].content, 'Mappa concettuale: graph TD; A-->B');
+assert.ok(currentLog[2].timestamp);
+
+assert.strictEqual(currentLog[3].type, 'quiz');
+assert.strictEqual(currentLog[3].content, 'Quiz: Domanda 1');
+assert.ok(currentLog[3].timestamp);
+
+console.log("✓ Test 16 Passed");
+
+
+// Test 17: triggerSummary empty lessonLog toast
+console.log("Test 17: triggerSummary empty lessonLog toast...");
+resetMocks();
+
+const triggerSummary = vm.runInContext('triggerSummary', context);
+triggerSummary();
+
+// Verify toast banner displays the correct error message
+assert.strictEqual(mockElements['toast-banner'].innerText, "Nessun contenuto da riassumere ancora");
+assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+console.log("✓ Test 17 Passed");
+
+
+// Test 18: triggerSummary successful WebSocket message
+console.log("Test 18: triggerSummary successful WebSocket message...");
+resetMocks();
+
+// Populate log first
+vm.runInContext('subtitlesActive = true', context);
+handleSubtitleMessage({
+    type: 'subtitle',
+    text: 'Buongiorno a tutti',
+    is_final: true
+});
+
+const ws18 = vm.runInContext('ws', context);
+assert.strictEqual(ws18.sentMessages.length, 0); // we reset sentMessages in resetMocks
+
+const triggerSummary18 = vm.runInContext('triggerSummary', context);
+triggerSummary18();
+
+// Check if WebSocket sent the generate_summary action with log data
+assert.strictEqual(ws18.sentMessages.length, 1);
+const msg = ws18.sentMessages[0];
+assert.strictEqual(msg.action, "generate_summary");
+assert.strictEqual(msg.data.lesson_log.length, 1);
+assert.strictEqual(msg.data.lesson_log[0].content, "Buongiorno a tutti");
+console.log("✓ Test 18 Passed");
+
+
+// Test 19: Summary Rendering
+console.log("Test 19: Summary Rendering...");
+resetMocks();
+
+const testSummaryData = {
+    type: "summary",
+    text: "Paragrafo uno con caratteri speciali <>&.\n\nParagrafo due."
+};
+
+const mockSummaryOut = {
+    innerHTML: ''
+};
+
+const originalGetElementByIdSummary = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "output") return mockSummaryOut;
+    return originalGetElementByIdSummary(id);
+};
+
+const renderDataSummary = vm.runInContext('renderData', context);
+renderDataSummary(testSummaryData);
+
+// Verify formatting: split by \n\n, wrap each in <p>, and escapeHTML
+const expectedHTML = "<p>Paragrafo uno con caratteri speciali &lt;&gt;&amp;.</p><p>Paragrafo due.</p>";
+assert.strictEqual(mockSummaryOut.innerHTML, expectedHTML);
+
+documentMock.getElementById = originalGetElementByIdSummary;
+console.log("✓ Test 19 Passed");
 
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");

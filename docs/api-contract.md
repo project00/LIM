@@ -69,6 +69,26 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 ```
 > Il renderer del PoC mostra le opzioni ma non gestisce `correct_index` — da aggiungere lato widget.
 
+### `generate_summary` (Remoto)
+```json
+// Richiesta
+{
+  "action": "generate_summary",
+  "data": {
+    "lesson_log": [
+      { "type": "subtitle", "content": "testo trascritto", "timestamp": "2026-07-23T10:00:00.000Z" },
+      { "type": "math", "content": "Espressione matematica: f(x) = 2x - 6", "timestamp": "2026-07-23T10:01:00.000Z" }
+    ]
+  }
+}
+// Risposta
+{
+  "type": "summary",
+  "source": "remote_llm",
+  "text": "Questo è il riassunto della lezione.\n\nSotto forma di paragrafi separati da doppia andata a capo."
+}
+```
+
 ### Messaggi di sistema
 ```json
 { "action": "ping_remote" }
