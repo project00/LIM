@@ -34,6 +34,8 @@ from services.graph_service import generate_concept_map  # noqa: E402
 from services.mermaid_validator import InvalidMermaidError  # noqa: E402
 from services.stt_service import transcribe_audio  # noqa: E402
 from services.translate_service import translate_text  # noqa: E402
+from services.quiz_service import generate_quiz  # noqa: E402
+from services.quiz_validator import InvalidQuizError  # noqa: E402
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
@@ -145,6 +147,43 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "concept_map",
                 "message": str(e)
+            }
+
+    elif action == "generate_quiz":
+        data_obj = payload.get("data") or {}
+        lesson_context = data_obj.get("lesson_context", "")
+        num_questions_val = data_obj.get("num_questions")
+
+        # Set fallback/default if not provided or invalid
+        num_questions = 4
+        if num_questions_val is not None:
+            try:
+                num_questions = int(num_questions_val)
+            except (ValueError, TypeError):
+                num_questions = 4
+
+        try:
+            questions = generate_quiz(lesson_context, num_questions)
+            return {
+                "type": "quiz",
+                "source": "remote_llm",
+                "questions": questions
+            }
+        except InvalidQuizError as e:
+            logger.warning("Quiz validation error occurred: %s", e)
+            return {
+                "type": "error",
+                "code": "INVALID_LLM_OUTPUT",
+                "action": "generate_quiz",
+                "message": str(e)
+            }
+        except Exception as e:
+            logger.error("LLM provider or unexpected error during quiz generation: %s", e, exc_info=True)
+            return {
+                "type": "error",
+                "code": "INVALID_LLM_OUTPUT",
+                "action": "generate_quiz",
+                "message": f"Errore del servizio LLM o output non valido: {str(e)}"
             }
 
     elif action == "transcribe_audio":
