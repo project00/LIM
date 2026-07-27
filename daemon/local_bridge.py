@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import datetime
 from enum import Enum
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import httpx
@@ -30,6 +31,44 @@ app.include_router(settings_router)
 # Serve local 3D models cache under /models_cache
 os.makedirs("model_cache", exist_ok=True)
 app.mount("/models_cache", StaticFiles(directory="model_cache"), name="models_cache")
+
+
+async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path: str | None) -> None:
+    """
+    Sends the message over the websocket and, if the message represents valid lesson content,
+    appends it as a single JSON line to the session's backup file.
+    """
+    message_str = message if isinstance(message, str) else json.dumps(message)
+    await websocket.send_text(message_str)
+
+    if not backup_path:
+        return
+
+    try:
+        msg_dict = json.loads(message_str) if isinstance(message, str) else message
+    except Exception:
+        return
+
+    # Filter out non-content messages (errors, warnings, ping/pong, and non-final subtitles)
+    msg_type = msg_dict.get("type")
+    if msg_type in ("error", "system_warning", "pong_remote"):
+        return
+
+    if msg_type == "subtitle" and not msg_dict.get("is_final", False):
+        return
+
+    # Only backup valid lesson content (sympy_math, concept_map, load_3d_model, generate_quiz, generate_summary, and final subtitle)
+    backup_entry = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "message": msg_dict
+    }
+
+    try:
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        with open(backup_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(backup_entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write to backup file {backup_path}: {e}")
 
 
 class RouteTarget(Enum):
@@ -258,8 +297,9 @@ class TranscriptionSession:
         self.is_running: bool = False
         self.websocket: WebSocket | None = None
         self.target_language: str | None = None
+        self.backup_path: str | None = None
 
-    async def start(self, websocket: WebSocket, target_language: str | None) -> None:
+    async def start(self, websocket: WebSocket, target_language: str | None, backup_path: str | None = None) -> None:
         """Starts a background audio capture loop."""
         if self.is_running:
             logger.warning("Transcription already running. Stopping previous stream first.")
@@ -267,6 +307,7 @@ class TranscriptionSession:
 
         self.websocket = websocket
         self.target_language = target_language
+        self.backup_path = backup_path
 
         import pyaudio
 
@@ -381,7 +422,7 @@ class TranscriptionSession:
                             }
 
                             if self.websocket:
-                                await self.websocket.send_text(json.dumps(websocket_msg))
+                                await send_and_backup(self.websocket, websocket_msg, self.backup_path)
 
                         except (httpx.ConnectError, httpx.TimeoutException) as e:
                             logger.warning(
@@ -445,6 +486,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("Widget LIM connesso via WebSocket.")
 
+    # Create session backup path under daemon/lesson_backups/<timestamp>.jsonl
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now_clean = now_iso.replace(":", "-")
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, f"{now_clean}.jsonl")
+
     # Instantiate per-connection transcription session manager
     transcription_session = TranscriptionSession()
 
@@ -479,7 +527,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         res = LocalEngine.process_math(
                             payload.get("data", "x^2 - 4")
                         )
-                        await websocket.send_text(json.dumps(res))
+                        await send_and_backup(websocket, res, backup_path)
                     elif action == "fast_ocr":
                         data_obj = payload.get("data") or {}
                         region = data_obj.get("region") or {}
@@ -517,7 +565,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     elif action == "start_transcription":
                         data_obj = payload.get("data") or {}
                         target_lang = data_obj.get("target_language")
-                        await transcription_session.start(websocket, target_lang)
+                        await transcription_session.start(websocket, target_lang, backup_path)
 
                     elif action == "stop_transcription":
                         await transcription_session.stop()
@@ -529,7 +577,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             query = payload.get("data", {}).get("query")
                             if query:
                                 res_metadata = await handle_load_3d_model(query, http_client, payload)
-                                await websocket.send_text(json.dumps(res_metadata))
+                                await send_and_backup(websocket, res_metadata, backup_path)
                                 continue
 
                         # Construct remote analyze URL dynamically
@@ -540,7 +588,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
                         )
                         response.raise_for_status()
-                        await websocket.send_text(response.text)
+                        await send_and_backup(websocket, response.text, backup_path)
 
                     except (httpx.ConnectError, httpx.TimeoutException):
                         logger.warning(f"Server remoto irraggiungibile per action: {action}")

@@ -371,6 +371,146 @@ async def test_start_transcription_double_start() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sympy_math_backups_successfully() -> None:
+    """Tests that a successful sympy_math local action results in exactly one backed up line."""
+    import shutil
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "x^2"}))
+        response = websocket.receive_json()
+        assert response["type"] == "math"
+
+    # Find the created backup file
+    assert os.path.exists(backup_dir)
+    files = [f for f in os.listdir(backup_dir) if f.endswith(".jsonl")]
+    assert len(files) == 1
+    backup_file_path = os.path.join(backup_dir, files[0])
+
+    with open(backup_file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    assert len(lines) == 1
+    entry = json.loads(lines[0].strip())
+    assert "timestamp" in entry
+    assert entry["message"]["type"] == "math"
+    assert entry["message"]["source"] == "local_engine"
+
+    # Clean up
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+@pytest.mark.asyncio
+async def test_remote_proxy_backups_successfully() -> None:
+    """Tests that successful REMOTE actions backup successfully but system warnings are skipped."""
+    import shutil
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+    client = TestClient(app)
+
+    remote_data = {
+        "type": "concept_map",
+        "source": "remote_llm",
+        "mermaid_code": "graph TD; Cuore-->Arterie;"
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            # 1. Successful remote proxy (should backup)
+            websocket.send_text(json.dumps({
+                "action": "concept_map",
+                "data": {"topic": "apparato circolatorio"}
+            }))
+            websocket.receive_json()
+
+    assert os.path.exists(backup_dir)
+    files = [f for f in os.listdir(backup_dir) if f.endswith(".jsonl")]
+    assert len(files) == 1
+    backup_file_path = os.path.join(backup_dir, files[0])
+
+    with open(backup_file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    # Only concept_map is lesson content and should be backed up
+    assert len(lines) == 1
+    entry = json.loads(lines[0].strip())
+    assert entry["message"]["type"] == "concept_map"
+
+    # Clean up
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+@pytest.mark.asyncio
+async def test_transcription_backups_successfully() -> None:
+    """Tests that transcription final subtitles are backed up but interim subtitles or warnings are skipped."""
+    import shutil
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    remote_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Buongiorno classe",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            # 1. Final subtitle should backup
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+            websocket.receive_json()
+
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+    assert os.path.exists(backup_dir)
+    files = [f for f in os.listdir(backup_dir) if f.endswith(".jsonl")]
+    assert len(files) == 1
+    backup_file_path = os.path.join(backup_dir, files[0])
+
+    with open(backup_file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    assert len(lines) == 1
+    entry = json.loads(lines[0].strip())
+    assert entry["message"]["type"] == "subtitle"
+    assert entry["message"]["is_final"] is True
+
+    # Clean up
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+
+@pytest.mark.asyncio
 async def test_load_3d_model_local_caching() -> None:
     """
     Tests that the local daemon caches 3D models upon first download,
