@@ -28,7 +28,7 @@ if not LLM_API_KEY:
 LLM_API_BASE = os.getenv("LLM_API_BASE")
 
 
-def generate_lesson_summary(lesson_log: List[Dict[str, Any]]) -> str:
+def generate_summary(lesson_log: List[Dict[str, Any]]) -> str:
     """
     Generates a lesson summary based on the provided lesson log.
 
@@ -53,7 +53,10 @@ def generate_lesson_summary(lesson_log: List[Dict[str, Any]]) -> str:
     prompt = (
         "Sei un assistente didattico per docenti di scuole italiane. "
         "Genera un riassunto strutturato e chiaro della lezione scolastica basandoti sul seguente registro delle attività svolte durante la lezione (lesson log).\n"
-        "Il riassunto deve essere scritto in italiano fluente e diviso in paragrafi separati esattamente da una doppia andata a capo (\\n\\n).\n"
+        "Raggruppa e organizza le attività per argomento/tema laddove sensato.\n\n"
+        "Il riassunto deve essere scritto in italiano fluente e in formato testo semplice (plain text), "
+        "con i paragrafi separati esattamente da una doppia andata a capo (\\n\\n).\n"
+        "NON usare markdown, NON usare HTML, e NON inserire blocchi di codice o recinti (code fences come ```).\n"
         "\n"
         "Registro delle Attività:\n"
         f"{log_text}\n"

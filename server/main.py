@@ -37,7 +37,7 @@ from services.translate_service import translate_text  # noqa: E402
 from services.quiz_service import generate_quiz  # noqa: E402
 from services.quiz_validator import InvalidQuizError  # noqa: E402
 from services.model_service import search_and_fetch_3d_model  # noqa: E402
-from services.summary_service import generate_lesson_summary  # noqa: E402
+from services.summary_service import generate_summary  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 app = FastAPI(
@@ -288,11 +288,11 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
             }
 
         try:
-            summary_text = generate_lesson_summary(lesson_log)
+            summary_text = generate_summary(lesson_log)
             return {
                 "type": "summary",
                 "source": "remote_llm",
-                "text": summary_text
+                "summary": summary_text
             }
         except Exception as e:
             logger.error("LLM provider or unexpected error during summary generation: %s", e, exc_info=True)

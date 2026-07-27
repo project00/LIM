@@ -683,7 +683,7 @@ resetMocks();
 
 const testSummaryData = {
     type: "summary",
-    text: "Paragrafo uno con caratteri speciali <>&.\n\nParagrafo due."
+    summary: "Paragrafo uno con caratteri speciali <>&.\n\nParagrafo due."
 };
 
 const mockSummaryOut = {
