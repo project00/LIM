@@ -96,6 +96,23 @@ const mockSetInterval = () => {};
 
 let lastTimeoutFn = null;
 
+// Mock Plotly
+const MockPlotly = {
+    newPlots: [],
+    purges: [],
+    newPlot: function(container, data, layout, config) {
+        this.newPlots.push({ container, data, layout, config });
+    },
+    purge: function(container) {
+        this.purges.push(container);
+    }
+};
+
+// Mock KaTeX
+const MockKatex = {
+    render: function() {}
+};
+
 // Mock SpeechRecognition Class
 class MockSpeechRecognition {
     constructor() {
@@ -133,7 +150,9 @@ const context = {
     console: console,
     window: {
         SpeechRecognition: MockSpeechRecognition
-    }
+    },
+    Plotly: MockPlotly,
+    katex: MockKatex
 };
 
 // Run script in the context
@@ -365,6 +384,60 @@ resetMocks();
 setSystemState(SYSTEM_STATES.ONLINE, "Online mode");
 assert.strictEqual(mockElements['subtitle-language'].disabled, false);
 console.log("✓ Test 12 Passed");
+
+
+// Test 14: Math Plotly Rendering Integration
+console.log("Test 14: Math Plotly Rendering Integration...");
+resetMocks();
+const testMathData = {
+    type: "math",
+    latex: "f(x) = x^2",
+    plot_data: {
+        x: [-1, 0, 1],
+        y: [1, 0, 1]
+    }
+};
+
+// Clear MockPlotly records
+MockPlotly.newPlots = [];
+MockPlotly.purges = [];
+
+// Prepare a mock parent container
+const mockMathOut = {
+    innerHTML: '',
+    appendChild: (child) => {
+        mockMathOut.appendedChildren = mockMathOut.appendedChildren || [];
+        mockMathOut.appendedChildren.push(child);
+    }
+};
+
+const originalGetElementByIdMath = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "output") return mockMathOut;
+    return originalGetElementByIdMath(id);
+};
+
+// Execute renderData
+const renderDataMath = vm.runInContext('renderData', context);
+renderDataMath(testMathData);
+
+// Verify KaTeX was rendered
+assert.notStrictEqual(mockMathOut.appendedChildren, undefined);
+assert.strictEqual(mockMathOut.appendedChildren.length, 2); // math-formula and math-chart divs
+assert.strictEqual(mockMathOut.appendedChildren[0].id, "math-formula");
+assert.strictEqual(mockMathOut.appendedChildren[1].id, "math-chart");
+
+// Verify Plotly was called
+assert.strictEqual(MockPlotly.newPlots.length, 1);
+assert.strictEqual(MockPlotly.purges.length, 1);
+assert.deepStrictEqual(MockPlotly.newPlots[0].data[0].x, [-1, 0, 1]);
+assert.deepStrictEqual(MockPlotly.newPlots[0].data[0].y, [1, 0, 1]);
+assert.strictEqual(MockPlotly.newPlots[0].config.responsive, true);
+assert.strictEqual(MockPlotly.newPlots[0].config.scrollZoom, true);
+
+// Restore original stub
+documentMock.getElementById = originalGetElementByIdMath;
+console.log("✓ Test 14 Passed");
 
 
 // Test 13: Interactive Quiz Verification
