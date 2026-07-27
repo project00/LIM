@@ -199,7 +199,67 @@
             out.innerHTML = "";
 
             if (data.type === "math") {
-                katex.render(data.latex, out, { displayMode: true });
+                const formulaContainer = document.createElement("div");
+                formulaContainer.id = "math-formula";
+                out.appendChild(formulaContainer);
+                katex.render(data.latex, formulaContainer, { displayMode: true });
+
+                if (data.plot_data) {
+                    const chartContainer = document.createElement("div");
+                    chartContainer.id = "math-chart";
+                    chartContainer.style.width = "100%";
+                    chartContainer.style.minHeight = "300px";
+                    chartContainer.style.marginTop = "15px";
+                    chartContainer.style.backgroundColor = "#1e1e2e";
+                    out.appendChild(chartContainer);
+
+                    try {
+                        Plotly.purge(chartContainer);
+                    } catch (e) {
+                        // ignore
+                    }
+
+                    const trace = {
+                        x: data.plot_data.x,
+                        y: data.plot_data.y,
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: { color: '#89b4fa', width: 3 },
+                        name: 'f(x)'
+                    };
+
+                    const layout = {
+                        title: {
+                            text: 'Grafico della Funzione',
+                            font: { color: '#cdd6f4', size: 16 }
+                        },
+                        paper_bgcolor: '#1e1e2e',
+                        plot_bgcolor: '#1e1e2e',
+                        xaxis: {
+                            gridcolor: '#313244',
+                            zerolinecolor: '#45475a',
+                            tickfont: { color: '#cdd6f4', size: 12 },
+                            title: { text: 'x', font: { color: '#cdd6f4' } }
+                        },
+                        yaxis: {
+                            gridcolor: '#313244',
+                            zerolinecolor: '#45475a',
+                            tickfont: { color: '#cdd6f4', size: 12 },
+                            title: { text: 'y', font: { color: '#cdd6f4' } }
+                        },
+                        margin: { t: 40, b: 40, l: 50, r: 20 },
+                        showlegend: false
+                    };
+
+                    const config = {
+                        responsive: true,
+                        displaylogo: false,
+                        scrollZoom: true,
+                        doubleClick: 'reset'
+                    };
+
+                    Plotly.newPlot(chartContainer, [trace], layout, config);
+                }
             } else if (data.type === "concept_map") {
                 out.innerHTML = `<pre class="mermaid">${data.mermaid_code}</pre>`;
                 mermaid.run();
