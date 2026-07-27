@@ -37,6 +37,7 @@ from services.translate_service import translate_text  # noqa: E402
 from services.quiz_service import generate_quiz  # noqa: E402
 from services.quiz_validator import InvalidQuizError  # noqa: E402
 from services.model_service import search_and_fetch_3d_model  # noqa: E402
+from services.summary_service import generate_lesson_summary  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 app = FastAPI(
@@ -273,6 +274,34 @@ async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
         except Exception as e:
             logger.error("Internal error during audio transcription: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error during transcription")
+
+    elif action == "generate_summary":
+        data_obj = payload.get("data") or {}
+        lesson_log = data_obj.get("lesson_log", [])
+
+        if not lesson_log:
+            return {
+                "type": "error",
+                "code": "EMPTY_LESSON_LOG",
+                "action": "generate_summary",
+                "message": "Nessun contenuto da riassumere ancora"
+            }
+
+        try:
+            summary_text = generate_lesson_summary(lesson_log)
+            return {
+                "type": "summary",
+                "source": "remote_llm",
+                "text": summary_text
+            }
+        except Exception as e:
+            logger.error("LLM provider or unexpected error during summary generation: %s", e, exc_info=True)
+            return {
+                "type": "error",
+                "code": "INVALID_LLM_OUTPUT",
+                "action": "generate_summary",
+                "message": f"Errore del servizio LLM o output non valido: {str(e)}"
+            }
 
     # Mirror back the payload with augmented metadata for non-implemented remote actions
     response_data = dict(payload)
