@@ -440,6 +440,46 @@ documentMock.getElementById = originalGetElementByIdMath;
 console.log("✓ Test 14 Passed");
 
 
+// Test 15: 3D Model Attribution Rendering
+console.log("Test 15: 3D Model Attribution Rendering...");
+resetMocks();
+const testModelData = {
+    type: "model_3d",
+    model_url: "/models/123/scene.gltf",
+    label: "Earth Model",
+    attribution: {
+        author: "NASA Science",
+        license: "CC-BY-4.0",
+        source_url: "https://sketchfab.com/earth"
+    }
+};
+
+const mockModelOut = {
+    innerHTML: ''
+};
+
+const originalGetElementByIdModel = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "output") return mockModelOut;
+    return originalGetElementByIdModel(id);
+};
+
+// Execute renderData
+const renderDataModel = vm.runInContext('renderData', context);
+renderDataModel(testModelData);
+
+// Assert the innerHTML contains <model-viewer> and CC attribution link, author, and license
+assert.ok(mockModelOut.innerHTML.includes("<model-viewer"));
+assert.ok(mockModelOut.innerHTML.includes("NASA Science"));
+assert.ok(mockModelOut.innerHTML.includes("CC-BY-4.0"));
+assert.ok(mockModelOut.innerHTML.includes('href="https://sketchfab.com/earth"'));
+assert.ok(mockModelOut.innerHTML.includes("Earth Model"));
+
+// Restore original stub
+documentMock.getElementById = originalGetElementByIdModel;
+console.log("✓ Test 15 Passed");
+
+
 // Test 13: Interactive Quiz Verification
 console.log("Test 13: Interactive Quiz Verification...");
 resetMocks();
