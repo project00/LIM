@@ -15,13 +15,13 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.summary_service import generate_lesson_summary
+from services.summary_service import generate_summary
 from main import app
 
 
 @patch("litellm.completion")
 def test_generate_lesson_summary_success(mock_completion: MagicMock) -> None:
-    """Tests that generate_lesson_summary service successfully queries LLM and returns summary text."""
+    """Tests that generate_summary service successfully queries LLM and returns summary text."""
     # Configure mock completion return value
     mock_choice = MagicMock()
     mock_choice.message.content = "Questo è il riassunto della lezione.\n\nContiene due paragrafi."
@@ -34,7 +34,7 @@ def test_generate_lesson_summary_success(mock_completion: MagicMock) -> None:
         {"type": "math", "content": "Espressione: f(x) = x^2", "timestamp": "2026-07-23T10:01:00.000Z"}
     ]
 
-    summary = generate_lesson_summary(lesson_log)
+    summary = generate_summary(lesson_log)
     assert summary == "Questo è il riassunto della lezione.\n\nContiene due paragrafi."
     mock_completion.assert_called_once()
 
@@ -64,7 +64,7 @@ def test_api_generate_summary_endpoint_success(mock_completion: MagicMock) -> No
     data = resp.json()
     assert data["type"] == "summary"
     assert data["source"] == "remote_llm"
-    assert data["text"] == "Riassunto di prova della lezione."
+    assert data["summary"] == "Riassunto di prova della lezione."
 
 
 def test_api_generate_summary_empty_log() -> None:

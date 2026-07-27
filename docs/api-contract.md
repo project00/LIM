@@ -85,7 +85,7 @@ Endpoint: `ws://127.0.0.1:5000/ws`
 {
   "type": "summary",
   "source": "remote_llm",
-  "text": "Questo è il riassunto della lezione.\n\nSotto forma di paragrafi separati da doppia andata a capo."
+  "summary": "Questo è il riassunto della lezione.\n\nSotto forma di paragrafi separati da doppia andata a capo."
 }
 ```
 
