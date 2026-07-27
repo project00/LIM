@@ -38,6 +38,61 @@ def test_sympy_math_local_route() -> None:
         assert response["type"] == "math"
         assert response["source"] == "local_engine"
         assert "f(x) =" in response["latex"]
+        assert response["plot_data"] is not None
+        assert isinstance(response["plot_data"]["x"], list)
+        assert isinstance(response["plot_data"]["y"], list)
+        assert len(response["plot_data"]["x"]) == len(response["plot_data"]["y"])
+        # Domain includes 101 points between -10 and 10
+        assert len(response["plot_data"]["x"]) == 101
+
+
+def test_sympy_math_discontinuity_route() -> None:
+    """Tests that a function with a removable discontinuity (e.g. 1/x) omits the singular point and returns the rest of the plot data."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "1/x"}))
+        response = websocket.receive_json()
+        assert response["type"] == "math"
+        assert response["source"] == "local_engine"
+        assert "f(x) =" in response["latex"]
+        assert response["plot_data"] is not None
+        # x = 0 is a pole (ZeroDivisionError), so it must be omitted. Total points: 101 - 1 = 100
+        assert len(response["plot_data"]["x"]) == 100
+        assert 0.0 not in response["plot_data"]["x"]
+
+
+def test_sympy_math_multivariable_omitted() -> None:
+    """Tests that a multi-variable function (e.g. x + y) returns plot_data: null gracefully without crashing."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "x + y"}))
+        response = websocket.receive_json()
+        assert response["type"] == "math"
+        assert response["source"] == "local_engine"
+        assert response["plot_data"] is None
+
+
+def test_sympy_math_constant_omitted() -> None:
+    """Tests that a constant function with zero free symbols returns plot_data: null gracefully."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "5"}))
+        response = websocket.receive_json()
+        assert response["type"] == "math"
+        assert response["source"] == "local_engine"
+        assert response["plot_data"] is None
+
+
+def test_sympy_math_parsing_error_route() -> None:
+    """Tests that a parsing failure is handled gracefully with standard error latex and plot_data: null."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "invalid syntax ++/ 123"}))
+        response = websocket.receive_json()
+        assert response["type"] == "math"
+        assert response["source"] == "local_engine"
+        assert "Errore parsing math locale" in response["latex"]
+        assert response["plot_data"] is None
 
 
 def test_pytesseract_ocr_with_fixture() -> None:
