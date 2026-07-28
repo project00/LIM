@@ -19,6 +19,10 @@
   <h1>⚙️ LIM-AI Copilot — Impostazioni</h1>
   <label>Server Remoto (URL)<input id="url" placeholder="http://192.168.1.100:8000"></label>
   <label>API Key<input id="key" type="password" placeholder="Lascia vuoto per non modificare"></label>
+  <label style="display: flex; align-items: center; margin-top: 14px; cursor: pointer; user-select: none;">
+    <input id="disable-backup" type="checkbox" style="width: auto; margin-top: 0; margin-right: 8px; transform: scale(1.2);">
+    Disabilita il backup locale delle lezioni
+  </label>
   <button id="save">💾 Salva</button>
   <button id="test">🔌 Verifica Connessione</button>
   <div id="result"></div>
@@ -27,9 +31,13 @@ async function loadConfig() {
   const r = await fetch("/api/config"); const d = await r.json();
   document.getElementById("url").value = d.remote_base_url;
   document.getElementById("key").placeholder = d.api_key_masked || "Nessuna chiave impostata";
+  document.getElementById("disable-backup").checked = d.disable_local_backup || false;
 }
 document.getElementById("save").onclick = async () => {
-  const body = { remote_base_url: document.getElementById("url").value };
+  const body = {
+    remote_base_url: document.getElementById("url").value,
+    disable_local_backup: document.getElementById("disable-backup").checked
+  };
   const key = document.getElementById("key").value;
   if (key) body.api_key = key;
   await fetch("/api/config", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });

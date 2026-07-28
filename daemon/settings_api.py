@@ -30,6 +30,7 @@ class DaemonSettings(BaseModel):
     """Pydantic model representing local daemon configuration settings."""
     remote_base_url: str = "http://192.168.1.100:8000"
     api_key: str = ""
+    disable_local_backup: bool = False
 
 
 def load_settings() -> DaemonSettings:
@@ -96,6 +97,7 @@ async def get_config() -> dict:
     return {
         "remote_base_url": settings.remote_base_url,
         "api_key_masked": masked,
+        "disable_local_backup": settings.disable_local_backup,
     }
 
 
@@ -103,6 +105,7 @@ class ConfigUpdate(BaseModel):
     """Payload schema for updating configuration."""
     remote_base_url: str
     api_key: str | None = None  # Empty/omitted value means do not touch the existing key
+    disable_local_backup: bool | None = None
 
 
 @router.post("/api/config")
@@ -120,6 +123,8 @@ async def update_config(update: ConfigUpdate) -> dict:
     settings.remote_base_url = update.remote_base_url.rstrip("/")
     if update.api_key is not None and update.api_key.strip() != "":
         settings.api_key = update.api_key
+    if update.disable_local_backup is not None:
+        settings.disable_local_backup = update.disable_local_backup
     save_settings(settings)
     return {"status": "saved"}
 
