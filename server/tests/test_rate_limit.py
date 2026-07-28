@@ -48,11 +48,14 @@ def setup_function():
     limiter.reset()
 
 
-def test_rate_limiting_triggered_on_analyze() -> None:
+def test_rate_limiting_triggered_on_analyze(monkeypatch) -> None:
     """
     Tests that POST /api/v1/analyze allows requests up to the configured limit,
     and returns HTTP 200 with a RATE_LIMITED payload on the exceeding request.
     """
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    limiter.reset()
+
     client = TestClient(app)
     headers = {"Authorization": "Bearer test_secret_token"}
     payload = {"action": "concept_map_test", "data": {"topic": "biology"}}
@@ -77,11 +80,14 @@ def test_rate_limiting_triggered_on_analyze() -> None:
     assert "Rate limit exceeded" in data["message"]
 
 
-def test_rate_limiting_keyed_by_bearer_token() -> None:
+def test_rate_limiting_keyed_by_bearer_token(monkeypatch) -> None:
     """
     Tests that the rate limiting is keyed by the bearer token.
     If Token A is rate limited, Token B remains completely unaffected and can make successful requests.
     """
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    limiter.reset()
+
     client = TestClient(app)
     headers_a = {"Authorization": "Bearer test_secret_token"}
     headers_b = {"Authorization": "Bearer test_secret_token_b"}
@@ -115,8 +121,11 @@ def test_rate_limiting_keyed_by_bearer_token() -> None:
         app.dependency_overrides.clear()
 
 
-def test_health_not_rate_limited() -> None:
+def test_health_not_rate_limited(monkeypatch) -> None:
     """Tests that GET /health remains unlimited and fully operational even if /api/v1/analyze is rate limited."""
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    limiter.reset()
+
     client = TestClient(app)
     headers = {"Authorization": "Bearer test_secret_token"}
     payload = {"action": "concept_map_test", "data": {"topic": "biology"}}
