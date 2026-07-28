@@ -802,7 +802,7 @@ const triggerQuizTest = vm.runInContext('triggerQuiz', context);
 
 // Test empty quiz trigger displays toast
 triggerQuizTest();
-assert.strictEqual(mockElements['toast-banner'].innerText, "Nessun contenuto per generare il quiz");
+assert.strictEqual(mockElements['toast-banner'].innerText, "Nessun contenuto da riassumere ancora");
 assert.strictEqual(mockElements['toast-banner'].style.display, "block");
 
 // Test populated quiz trigger sends correct data
@@ -819,6 +819,24 @@ assert.deepStrictEqual(ws22.sentMessages[0], {
     }
 });
 console.log("✓ Test 22 Passed");
+
+
+// Test 23: triggerOCR behavior
+console.log("Test 23: triggerOCR behavior...");
+resetMocks();
+
+const triggerOCRTest = vm.runInContext('triggerOCR', context);
+triggerOCRTest();
+
+const ws23 = vm.runInContext('ws', context);
+assert.strictEqual(ws23.sentMessages.length, 1);
+assert.deepStrictEqual(ws23.sentMessages[0], {
+    action: 'fast_ocr',
+    data: {
+        region: { x: 0, y: 0, width: 1920, height: 1080 }
+    }
+});
+console.log("✓ Test 23 Passed");
 
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");

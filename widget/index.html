@@ -63,6 +63,7 @@
 
     <div class="toolbar">
         <button onclick="toggleInputFlow('math')">📐 Math SymPy</button>
+        <button onclick="triggerOCR()">📷 OCR</button>
         <button class="remote-only" data-name="🧠 Mappa" onclick="toggleInputFlow('mappa')">🧠 Mappa</button>
         <button class="remote-only" data-name="🧊 3D Model" onclick="toggleInputFlow('model')">🧊 3D Model</button>
         <button class="remote-only" data-name="❓ Quiz" onclick="triggerQuiz()">❓ Quiz</button>
@@ -460,11 +461,22 @@
             }
         }
 
+        function triggerOCR() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: "fast_ocr",
+                    data: {
+                        region: { x: 0, y: 0, width: 1920, height: 1080 }
+                    }
+                }));
+            }
+        }
+
         function triggerQuiz() {
             if (lessonLog.length === 0) {
                 const toast = document.getElementById("toast-banner");
                 if (toast) {
-                    toast.innerText = "Nessun contenuto per generare il quiz";
+                    toast.innerText = "Nessun contenuto da riassumere ancora";
                     toast.style.display = "block";
                     setTimeout(() => { toast.style.display = "none"; }, 5000);
                 }
