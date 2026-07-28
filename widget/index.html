@@ -62,10 +62,10 @@
     <div id="subtitles-bar">🎙️ Live STT: In attesa di input audio...</div>
 
     <div class="toolbar">
-        <button onclick="requestAction('sympy_math')">📐 Math SymPy</button>
-        <button class="remote-only" data-name="🧠 Mappa" onclick="requestAction('concept_map')">🧠 Mappa</button>
-        <button class="remote-only" data-name="🧊 3D Model" onclick="requestAction('load_3d_model')">🧊 3D Model</button>
-        <button class="remote-only" data-name="❓ Quiz" onclick="requestAction('generate_quiz')">❓ Quiz</button>
+        <button onclick="toggleInputFlow('math')">📐 Math SymPy</button>
+        <button class="remote-only" data-name="🧠 Mappa" onclick="toggleInputFlow('mappa')">🧠 Mappa</button>
+        <button class="remote-only" data-name="🧊 3D Model" onclick="toggleInputFlow('model')">🧊 3D Model</button>
+        <button class="remote-only" data-name="❓ Quiz" onclick="triggerQuiz()">❓ Quiz</button>
         <button class="remote-only" data-name="📋 Riassumi Lezione" onclick="triggerSummary()">📋 Riassumi Lezione</button>
         <button onclick="exportToPDF()">📄 Esporta PDF</button>
         <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
@@ -77,6 +77,24 @@
             <option value="es">Spagnolo</option>
         </select>
         <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
+    </div>
+
+    <div id="inputs-area" style="display: none; background: #242535; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #45475a;">
+        <div id="flow-math" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">📐 Inserisci Espressione Matematica:</span>
+            <input type="text" id="input-math" placeholder="es. 2*x + 6 - 12" onkeydown="if(event.key === 'Enter') submitMath()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+            <button onclick="submitMath()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Calcola</button>
+        </div>
+        <div id="flow-mappa" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧠 Argomento della Mappa:</span>
+            <input type="text" id="input-mappa" placeholder="es. apparato circolatorio" onkeydown="if(event.key === 'Enter') submitMappa()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+            <button onclick="submitMappa()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Genera</button>
+        </div>
+        <div id="flow-model" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧊 Nome Modello 3D:</span>
+            <input type="text" id="input-model" placeholder="es. molecola acqua H2O" onkeydown="if(event.key === 'Enter') submitModel()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+            <button onclick="submitModel()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Cerca</button>
+        </div>
     </div>
 
     <div id="output-container">
@@ -384,9 +402,84 @@
             }
         }
 
-        function requestAction(actionType) {
+        function toggleInputFlow(flowType) {
+            const container = document.getElementById("inputs-area");
+            if (!container) return;
+            const flows = ["math", "mappa", "model"];
+
+            const targetFlow = document.getElementById(`flow-${flowType}`);
+            if (!targetFlow) return;
+            const isCurrentlyVisible = container.style.display !== "none" && targetFlow.style.display !== "none";
+
+            // Hide all flows
+            flows.forEach(f => {
+                const el = document.getElementById(`flow-${f}`);
+                if (el) el.style.display = "none";
+            });
+
+            if (isCurrentlyVisible) {
+                container.style.display = "none";
+            } else {
+                container.style.display = "block";
+                targetFlow.style.display = "flex";
+                const inputEl = document.getElementById(`input-${flowType}`);
+                if (inputEl && typeof inputEl.focus === "function") inputEl.focus();
+            }
+        }
+
+        function submitMath() {
+            const inputEl = document.getElementById("input-math");
+            const val = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
+            if (!val) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: actionType, data: "2*x + 6 - 12" }));
+                ws.send(JSON.stringify({ action: "sympy_math", data: val }));
+            }
+        }
+
+        function submitMappa() {
+            const inputEl = document.getElementById("input-mappa");
+            const val = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
+            if (!val) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: "concept_map",
+                    data: { topic: val, language: "it" }
+                }));
+            }
+        }
+
+        function submitModel() {
+            const inputEl = document.getElementById("input-model");
+            const val = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
+            if (!val) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: "load_3d_model",
+                    data: { query: val }
+                }));
+            }
+        }
+
+        function triggerQuiz() {
+            if (lessonLog.length === 0) {
+                const toast = document.getElementById("toast-banner");
+                if (toast) {
+                    toast.innerText = "Nessun contenuto per generare il quiz";
+                    toast.style.display = "block";
+                    setTimeout(() => { toast.style.display = "none"; }, 5000);
+                }
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const contextText = lessonLog.map(entry => entry.content).join("\n");
+                ws.send(JSON.stringify({
+                    action: "generate_quiz",
+                    data: {
+                        lesson_context: contextText,
+                        num_questions: 4
+                    }
+                }));
             }
         }
 

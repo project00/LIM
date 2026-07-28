@@ -707,5 +707,119 @@ documentMock.getElementById = originalGetElementByIdSummary;
 console.log("✓ Test 19 Passed");
 
 
+// Test 20: toggleInputFlow toggles visibility and hides other flows
+console.log("Test 20: toggleInputFlow toggles visibility...");
+resetMocks();
+
+const mockInputsArea = { style: { display: 'none' } };
+const mockFlowMath = { style: { display: 'none' } };
+const mockFlowMappa = { style: { display: 'none' } };
+const mockFlowModel = { style: { display: 'none' } };
+const mockInputMath = { value: '', focus: () => { mockInputMath.focused = true; }, focused: false };
+
+const originalGetElementByIdToggle = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "inputs-area") return mockInputsArea;
+    if (id === "flow-math") return mockFlowMath;
+    if (id === "flow-mappa") return mockFlowMappa;
+    if (id === "flow-model") return mockFlowModel;
+    if (id === "input-math") return mockInputMath;
+    return originalGetElementByIdToggle(id);
+};
+
+const toggleInputFlowTest = vm.runInContext('toggleInputFlow', context);
+
+// Toggle math flow ON
+toggleInputFlowTest('math');
+assert.strictEqual(mockInputsArea.style.display, 'block');
+assert.strictEqual(mockFlowMath.style.display, 'flex');
+assert.strictEqual(mockFlowMappa.style.display, 'none');
+assert.strictEqual(mockFlowModel.style.display, 'none');
+assert.strictEqual(mockInputMath.focused, true);
+
+// Toggle math flow OFF
+toggleInputFlowTest('math');
+assert.strictEqual(mockInputsArea.style.display, 'none');
+
+documentMock.getElementById = originalGetElementByIdToggle;
+console.log("✓ Test 20 Passed");
+
+
+// Test 21: submitMath, submitMappa, and submitModel send correct payloads
+console.log("Test 21: submitMath, submitMappa, and submitModel payload validation...");
+resetMocks();
+
+const mockInputMathField = { value: '3*x + 5' };
+const mockInputMappaField = { value: 'la cellula' };
+const mockInputModelField = { value: 'cuore' };
+
+const originalGetElementByIdSubmit = documentMock.getElementById;
+documentMock.getElementById = (id) => {
+    if (id === "input-math") return mockInputMathField;
+    if (id === "input-mappa") return mockInputMappaField;
+    if (id === "input-model") return mockInputModelField;
+    return originalGetElementByIdSubmit(id);
+};
+
+const submitMathTest = vm.runInContext('submitMath', context);
+const submitMappaTest = vm.runInContext('submitMappa', context);
+const submitModelTest = vm.runInContext('submitModel', context);
+
+// Submit math
+submitMathTest();
+const ws21 = vm.runInContext('ws', context);
+assert.strictEqual(ws21.sentMessages.length, 1);
+assert.deepStrictEqual(ws21.sentMessages[0], {
+    action: 'sympy_math',
+    data: '3*x + 5'
+});
+
+// Submit mappa
+submitMappaTest();
+assert.strictEqual(ws21.sentMessages.length, 2);
+assert.deepStrictEqual(ws21.sentMessages[1], {
+    action: 'concept_map',
+    data: { topic: 'la cellula', language: 'it' }
+});
+
+// Submit model
+submitModelTest();
+assert.strictEqual(ws21.sentMessages.length, 3);
+assert.deepStrictEqual(ws21.sentMessages[2], {
+    action: 'load_3d_model',
+    data: { query: 'cuore' }
+});
+
+documentMock.getElementById = originalGetElementByIdSubmit;
+console.log("✓ Test 21 Passed");
+
+
+// Test 22: triggerQuiz behavior with empty and populated lessonLogs
+console.log("Test 22: triggerQuiz behavior with empty and populated lessonLogs...");
+resetMocks();
+
+const triggerQuizTest = vm.runInContext('triggerQuiz', context);
+
+// Test empty quiz trigger displays toast
+triggerQuizTest();
+assert.strictEqual(mockElements['toast-banner'].innerText, "Nessun contenuto per generare il quiz");
+assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+
+// Test populated quiz trigger sends correct data
+resetMocks();
+vm.runInContext('lessonLog = [{ type: "subtitle", content: "Spiegazione sul cuore", timestamp: "2026-07-23" }]', context);
+triggerQuizTest();
+const ws22 = vm.runInContext('ws', context);
+assert.strictEqual(ws22.sentMessages.length, 1);
+assert.deepStrictEqual(ws22.sentMessages[0], {
+    action: 'generate_quiz',
+    data: {
+        lesson_context: 'Spiegazione sul cuore',
+        num_questions: 4
+    }
+});
+console.log("✓ Test 22 Passed");
+
+
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
 process.exit(0);
