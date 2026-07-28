@@ -13,8 +13,12 @@ Design Note:
 import logging
 import os
 from typing import Any, Dict
-from fastapi import FastAPI, Depends, Header, HTTPException, status
+from fastapi import FastAPI, Depends, Header, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 import openai
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Configure logging using standard logging library as per AGENTS.md philosophy
 logging.basicConfig(
@@ -45,6 +49,56 @@ app = FastAPI(
     description="Mock remote server for development verification and API routing with authentication",
     version="1.0.0"
 )
+
+def get_rate_limit(*args, **kwargs) -> str:
+    """
+    Returns the rate limit dynamically from the environment variable.
+    """
+    limit_val = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+    return f"{limit_val}/minute"
+
+
+def get_bearer_token(request: Request) -> str:
+    """
+    Key function for rate limiting that extracts the Authorization Bearer token.
+    Falls back to remote address if missing or malformed.
+    """
+    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=get_bearer_token)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """
+    Custom exception handler for rate limits that returns an application error payload
+    with HTTP 200, matching the local bridge raise_for_status expectations.
+    """
+    try:
+        payload = await request.json()
+        action = payload.get("action", "unknown")
+    except Exception:
+        action = "unknown"
+
+    limit_val = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+    logger.warning("Rate limit exceeded for action: %s", action)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "type": "error",
+            "code": "RATE_LIMITED",
+            "action": action,
+            "message": f"Rate limit exceeded: maximum {limit_val} requests per minute are allowed."
+        }
+    )
+
 
 # Serve the persistent local 3D models directory under /models
 os.makedirs("model_cache", exist_ok=True)
@@ -110,7 +164,8 @@ async def health() -> Dict[str, str]:
 
 
 @app.post("/api/v1/analyze")
-async def analyze(payload: Dict[str, Any], _auth: None = Depends(verify_api_key)) -> Dict[str, Any]:
+@limiter.limit(get_rate_limit)
+async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depends(verify_api_key)) -> Dict[str, Any]:
     """
     Mock analyze endpoint that echoes back request payloads with added metadata.
     Requires dynamic bearer token verification.
