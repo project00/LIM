@@ -23,7 +23,85 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_bridge")
 
+import re
+
+def parse_filename_timestamp(filename: str) -> datetime.datetime | None:
+    """
+    Parses an ISO 8601 timestamp from a lesson backup filename.
+    Format example: YYYY-MM-DDTHH-MM-SS.ffffff+HH-MM.jsonl (with colons replaced by dashes)
+    """
+    if not filename.endswith(".jsonl"):
+        return None
+    stem = filename[:-6]  # strip .jsonl
+
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})", stem)
+    if not match:
+        return None
+
+    year, month, day, hour, minute, second = map(int, match.groups())
+
+    tz = datetime.timezone.utc
+    offset_match = re.search(r"([+-])(\d{2})-(\d{2})$", stem)
+    if offset_match:
+        sign, offset_h, offset_m = offset_match.groups()
+        offset_val = int(offset_h) * 60 + int(offset_m)
+        if sign == "-":
+            offset_val = -offset_val
+        tz = datetime.timezone(datetime.timedelta(minutes=offset_val))
+    elif stem.endswith("Z"):
+        tz = datetime.timezone.utc
+
+    return datetime.datetime(year, month, day, hour, minute, second, tzinfo=tz)
+
+
+def cleanup_old_backups() -> None:
+    """
+    Scans daemon/lesson_backups/ and deletes any .jsonl backup file
+    whose filename timestamp is older than LESSON_BACKUP_RETENTION_DAYS (default 30).
+    Logs clearly whenever files are deleted.
+    """
+    try:
+        retention_days = int(os.getenv("LESSON_BACKUP_RETENTION_DAYS", "30"))
+        backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
+        if not os.path.exists(backup_dir):
+            return
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        threshold = now - datetime.timedelta(days=retention_days)
+        logger.info(
+            f"Scanning '{backup_dir}' for lesson backups older than {retention_days} days "
+            f"(threshold: {threshold.isoformat()})."
+        )
+
+        deleted_count = 0
+        for filename in os.listdir(backup_dir):
+            if not filename.endswith(".jsonl"):
+                continue
+            filepath = os.path.join(backup_dir, filename)
+            try:
+                dt = parse_filename_timestamp(filename)
+                if dt and dt < threshold:
+                    os.remove(filepath)
+                    deleted_count += 1
+                    logger.info(f"Deleted old lesson backup file: '{filename}' (timestamp: {dt.isoformat()})")
+            except Exception as e:
+                logger.error(f"Failed to process backup file '{filename}' during cleanup: {e}")
+
+        if deleted_count > 0:
+            logger.info(f"Cleanup complete. Deleted {deleted_count} old lesson backup files.")
+        else:
+            logger.info("Cleanup complete. No old lesson backup files were found.")
+    except Exception as e:
+        logger.error(f"Error during backup cleanup: {e}")
+
+
 app = FastAPI(title="LIM AI Local Daemon Bridge")
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    cleanup_old_backups()
+
 
 # Include the administrative and setup settings endpoints as specified
 app.include_router(settings_router)
@@ -40,6 +118,10 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
     """
     message_str = message if isinstance(message, str) else json.dumps(message)
     await websocket.send_text(message_str)
+
+    # Return early and bypass file writing if backup is disabled in settings
+    if settings.disable_local_backup:
+        return
 
     if not backup_path:
         return

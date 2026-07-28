@@ -370,6 +370,112 @@ async def test_start_transcription_double_start() -> None:
             await asyncio.sleep(0.05)
 
 
+def test_parse_filename_timestamp() -> None:
+    """Tests the parsing of ISO 8601 timestamps from filenames."""
+    from local_bridge import parse_filename_timestamp
+    import datetime
+
+    fn1 = "2026-07-28T03-12-15.808300+00-00.jsonl"
+    dt1 = parse_filename_timestamp(fn1)
+    assert dt1 is not None
+    assert dt1.year == 2026
+    assert dt1.month == 7
+    assert dt1.day == 28
+    assert dt1.hour == 3
+    assert dt1.minute == 12
+    assert dt1.second == 15
+    assert dt1.tzinfo == datetime.timezone.utc
+
+    # Invalid filename should return None
+    assert parse_filename_timestamp("invalid-name.txt") is None
+    assert parse_filename_timestamp("2026-07-28.jsonl") is None
+
+
+def test_cleanup_old_backups_retention(monkeypatch) -> None:
+    """Tests that old backup files are deleted while new ones are retained based on retention settings."""
+    import tempfile
+    import shutil
+    import datetime
+    from local_bridge import cleanup_old_backups
+
+    # Create a temporary directory for backups
+    tmp_dir = tempfile.mkdtemp()
+
+    # We will patch local_bridge to look at our tmp_dir instead of the default lesson_backups
+    monkeypatch.setattr("local_bridge.os.path.dirname", lambda path: tmp_dir)
+    # Ensure the backup directory exists internally inside mock
+    os.makedirs(os.path.join(tmp_dir, "lesson_backups"), exist_ok=True)
+    real_backup_dir = os.path.join(tmp_dir, "lesson_backups")
+
+    try:
+        # 1. Create a recent file (today)
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        recent_fn = f"{now_dt.isoformat().replace(':', '-')}.jsonl"
+        with open(os.path.join(real_backup_dir, recent_fn), "w") as f:
+            f.write("{}")
+
+        # 2. Create an old file (older than 30 days, e.g. 40 days ago)
+        old_dt = now_dt - datetime.timedelta(days=40)
+        old_fn = f"{old_dt.isoformat().replace(':', '-')}.jsonl"
+        with open(os.path.join(real_backup_dir, old_fn), "w") as f:
+            f.write("{}")
+
+        # Run cleanup with LESSON_BACKUP_RETENTION_DAYS set to 30
+        monkeypatch.setenv("LESSON_BACKUP_RETENTION_DAYS", "30")
+        cleanup_old_backups()
+
+        # Recent file should STILL exist, old file should be DELETED
+        assert os.path.exists(os.path.join(real_backup_dir, recent_fn))
+        assert not os.path.exists(os.path.join(real_backup_dir, old_fn))
+
+    finally:
+        shutil.rmtree(tmp_dir)
+
+
+@pytest.mark.asyncio
+async def test_send_and_backup_respects_disable_toggle() -> None:
+    """Tests that send_and_backup bypasses file writes when settings.disable_local_backup is active."""
+    from local_bridge import send_and_backup, settings
+    import tempfile
+    import shutil
+
+    mock_ws = AsyncMock()
+    message = {"type": "math", "source": "local_engine", "latex": "f(x) = x"}
+
+    tmp_dir = tempfile.mkdtemp()
+    backup_file = os.path.join(tmp_dir, "test_session.jsonl")
+
+    try:
+        # Toggle enabled (backups are disabled)
+        settings.disable_local_backup = True
+        await send_and_backup(mock_ws, message, backup_file)
+
+        # Websocket should be called
+        mock_ws.send_text.assert_called_once()
+        # File should NOT exist or be empty
+        assert not os.path.exists(backup_file)
+
+        # Toggle disabled (backups are enabled)
+        mock_ws.reset_mock()
+        settings.disable_local_backup = False
+        await send_and_backup(mock_ws, message, backup_file)
+
+        # Websocket should be called
+        mock_ws.send_text.assert_called_once()
+        # File should now exist and contain the backed up message
+        assert os.path.exists(backup_file)
+        with open(backup_file, "r") as f:
+            lines = f.readlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["message"]["type"] == "math"
+
+    finally:
+        shutil.rmtree(tmp_dir)
+        # Restore default setting state
+        settings.disable_local_backup = False
+
+
 @pytest.mark.asyncio
 async def test_sympy_math_backups_successfully() -> None:
     """Tests that a successful sympy_math local action results in exactly one backed up line."""
