@@ -18,7 +18,7 @@ server/model_cache/
 
 Both cleanup and backup unit/integration tests are strictly isolated inside sandboxed temporary directories created dynamically via `tempfile.mkdtemp()`.
 
-### Verbatim test setups from `daemon/tests/test_local_bridge.py`:
+### Verbatim tests from `daemon/tests/test_local_bridge.py`:
 
 ```python
 def test_cleanup_old_backups_retention(monkeypatch) -> None:
@@ -31,11 +31,29 @@ def test_cleanup_old_backups_retention(monkeypatch) -> None:
     # Create a temporary directory for backups
     tmp_dir = tempfile.mkdtemp()
 
-    # We will patch local_bridge to look at our tmp_dir instead of the default lesson_backups
-    monkeypatch.setattr("local_bridge.os.path.dirname", lambda path: tmp_dir)
-    # Ensure the backup directory exists internally inside mock
-    os.makedirs(os.path.join(tmp_dir, "lesson_backups"), exist_ok=True)
-    real_backup_dir = os.path.join(tmp_dir, "lesson_backups")
+    try:
+        # 1. Create a recent file (today)
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        recent_fn = f"{now_dt.isoformat().replace(':', '-')}.jsonl"
+        with open(os.path.join(tmp_dir, recent_fn), "w") as f:
+            f.write("{}")
+
+        # 2. Create an old file (older than 30 days, e.g. 40 days ago)
+        old_dt = now_dt - datetime.timedelta(days=40)
+        old_fn = f"{old_dt.isoformat().replace(':', '-')}.jsonl"
+        with open(os.path.join(tmp_dir, old_fn), "w") as f:
+            f.write("{}")
+
+        # Run cleanup with LESSON_BACKUP_RETENTION_DAYS set to 30
+        monkeypatch.setenv("LESSON_BACKUP_RETENTION_DAYS", "30")
+        cleanup_old_backups(backups_dir=tmp_dir)
+
+        # Recent file should STILL exist, old file should be DELETED
+        assert os.path.exists(os.path.join(tmp_dir, recent_fn))
+        assert not os.path.exists(os.path.join(tmp_dir, old_fn))
+
+    finally:
+        shutil.rmtree(tmp_dir)
 ```
 
 ```python
@@ -51,6 +69,36 @@ async def test_send_and_backup_respects_disable_toggle() -> None:
 
     tmp_dir = tempfile.mkdtemp()
     backup_file = os.path.join(tmp_dir, "test_session.jsonl")
+
+    try:
+        # Toggle enabled (backups are disabled)
+        settings.disable_local_backup = True
+        await send_and_backup(mock_ws, message, backup_file)
+
+        # Websocket should be called
+        mock_ws.send_text.assert_called_once()
+        # File should NOT exist or be empty
+        assert not os.path.exists(backup_file)
+
+        # Toggle disabled (backups are enabled)
+        mock_ws.reset_mock()
+        settings.disable_local_backup = False
+        await send_and_backup(mock_ws, message, backup_file)
+
+        # Websocket should be called
+        mock_ws.send_text.assert_called_once()
+        # File should now exist and contain the backed up message
+        assert os.path.exists(backup_file)
+        with open(backup_file, "r") as f:
+            lines = f.readlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["message"]["type"] == "math"
+
+    finally:
+        shutil.rmtree(tmp_dir)
+        # Restore default setting state
+        settings.disable_local_backup = False
 ```
 
 - `Tests are isolated to a temp directory: YES`

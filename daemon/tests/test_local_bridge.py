@@ -401,32 +401,26 @@ def test_cleanup_old_backups_retention(monkeypatch) -> None:
     # Create a temporary directory for backups
     tmp_dir = tempfile.mkdtemp()
 
-    # We will patch local_bridge to look at our tmp_dir instead of the default lesson_backups
-    monkeypatch.setattr("local_bridge.os.path.dirname", lambda path: tmp_dir)
-    # Ensure the backup directory exists internally inside mock
-    os.makedirs(os.path.join(tmp_dir, "lesson_backups"), exist_ok=True)
-    real_backup_dir = os.path.join(tmp_dir, "lesson_backups")
-
     try:
         # 1. Create a recent file (today)
         now_dt = datetime.datetime.now(datetime.timezone.utc)
         recent_fn = f"{now_dt.isoformat().replace(':', '-')}.jsonl"
-        with open(os.path.join(real_backup_dir, recent_fn), "w") as f:
+        with open(os.path.join(tmp_dir, recent_fn), "w") as f:
             f.write("{}")
 
         # 2. Create an old file (older than 30 days, e.g. 40 days ago)
         old_dt = now_dt - datetime.timedelta(days=40)
         old_fn = f"{old_dt.isoformat().replace(':', '-')}.jsonl"
-        with open(os.path.join(real_backup_dir, old_fn), "w") as f:
+        with open(os.path.join(tmp_dir, old_fn), "w") as f:
             f.write("{}")
 
         # Run cleanup with LESSON_BACKUP_RETENTION_DAYS set to 30
         monkeypatch.setenv("LESSON_BACKUP_RETENTION_DAYS", "30")
-        cleanup_old_backups()
+        cleanup_old_backups(backups_dir=tmp_dir)
 
         # Recent file should STILL exist, old file should be DELETED
-        assert os.path.exists(os.path.join(real_backup_dir, recent_fn))
-        assert not os.path.exists(os.path.join(real_backup_dir, old_fn))
+        assert os.path.exists(os.path.join(tmp_dir, recent_fn))
+        assert not os.path.exists(os.path.join(tmp_dir, old_fn))
 
     finally:
         shutil.rmtree(tmp_dir)
