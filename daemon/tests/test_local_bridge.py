@@ -370,6 +370,42 @@ async def test_start_transcription_double_start() -> None:
             await asyncio.sleep(0.05)
 
 
+def test_tesseract_cmd_path_selection_packaged() -> None:
+    """Tests that sys.frozen packaged mode correctly overrides pytesseract's tesseract_cmd path."""
+    import importlib
+    import sys
+    import pytesseract
+
+    # Mock frozen state and _MEIPASS path
+    with patch("sys.frozen", True, create=True), \
+         patch("sys._MEIPASS", "/mock/mei/dir", create=True):
+
+        # Reload local_bridge to trigger the import-time configuration block
+        import local_bridge
+        importlib.reload(local_bridge)
+
+        expected_path = os.path.join("/mock/mei/dir", "tesseract", "tesseract.exe")
+        assert pytesseract.pytesseract.tesseract_cmd == expected_path
+
+
+def test_tesseract_cmd_path_selection_development() -> None:
+    """Tests that development mode leaves pytesseract's tesseract_cmd untouched."""
+    import importlib
+    import sys
+    import pytesseract
+
+    # Save current value
+    original_cmd = pytesseract.pytesseract.tesseract_cmd
+
+    # Mock non-frozen/dev state
+    with patch("sys.frozen", False, create=True):
+        import local_bridge
+        importlib.reload(local_bridge)
+
+        # Should remain the original/system configured cmd (or whatever was there before)
+        assert pytesseract.pytesseract.tesseract_cmd == original_cmd
+
+
 def test_parse_filename_timestamp() -> None:
     """Tests the parsing of ISO 8601 timestamps from filenames."""
     from local_bridge import parse_filename_timestamp

@@ -23,6 +23,7 @@ htmlcov/
 daemon/lesson_backups/
 daemon/model_cache/
 server/model_cache/
+daemon/tesseract/
 
 # Packaged widget artifacts and build directories
 dist/

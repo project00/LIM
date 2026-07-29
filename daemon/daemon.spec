@@ -25,8 +25,10 @@ hidden_imports = (
 )
 
 # setup.html must be bundled alongside the executable to be served by the web engine.
+# We also bundle the vendored tesseract folder under the tesseract/ subfolder.
 datas = [
     ('setup.html', '.'),
+    ('tesseract', 'tesseract'),
 ]
 
 a = Analysis(
