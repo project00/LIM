@@ -11,7 +11,14 @@ import sympy as sp
 import pytesseract
 import hashlib
 import os
+import sys
 from fastapi.staticfiles import StaticFiles
+
+# Configure Pytesseract command path dynamically when running inside a PyInstaller package (frozen)
+if getattr(sys, "frozen", False):
+    mei_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    bundled_tesseract_path = os.path.join(mei_dir, "tesseract", "tesseract.exe")
+    pytesseract.pytesseract.tesseract_cmd = bundled_tesseract_path
 
 # Import the configuration settings and routes router dynamically
 from settings_api import settings, router as settings_router
