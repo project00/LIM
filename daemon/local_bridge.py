@@ -54,30 +54,31 @@ def parse_filename_timestamp(filename: str) -> datetime.datetime | None:
     return datetime.datetime(year, month, day, hour, minute, second, tzinfo=tz)
 
 
-def cleanup_old_backups() -> None:
+def cleanup_old_backups(backups_dir: str | None = None) -> None:
     """
-    Scans daemon/lesson_backups/ and deletes any .jsonl backup file
+    Scans daemon/lesson_backups/ (or overridable backups_dir) and deletes any .jsonl backup file
     whose filename timestamp is older than LESSON_BACKUP_RETENTION_DAYS (default 30).
     Logs clearly whenever files are deleted.
     """
     try:
         retention_days = int(os.getenv("LESSON_BACKUP_RETENTION_DAYS", "30"))
-        backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
-        if not os.path.exists(backup_dir):
+        if backups_dir is None:
+            backups_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
+        if not os.path.exists(backups_dir):
             return
 
         now = datetime.datetime.now(datetime.timezone.utc)
         threshold = now - datetime.timedelta(days=retention_days)
         logger.info(
-            f"Scanning '{backup_dir}' for lesson backups older than {retention_days} days "
+            f"Scanning '{backups_dir}' for lesson backups older than {retention_days} days "
             f"(threshold: {threshold.isoformat()})."
         )
 
         deleted_count = 0
-        for filename in os.listdir(backup_dir):
+        for filename in os.listdir(backups_dir):
             if not filename.endswith(".jsonl"):
                 continue
-            filepath = os.path.join(backup_dir, filename)
+            filepath = os.path.join(backups_dir, filename)
             try:
                 dt = parse_filename_timestamp(filename)
                 if dt and dt < threshold:
