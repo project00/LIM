@@ -23,3 +23,7 @@ htmlcov/
 daemon/lesson_backups/
 daemon/model_cache/
 server/model_cache/
+
+# Packaged widget artifacts and build directories
+dist/
+build/

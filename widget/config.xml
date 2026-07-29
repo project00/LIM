@@ -1,1 +1,12 @@
-
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:ub="http://uniboard.mnemis.com/widgets"
+        id="http://www.openboard.org/widget/application/ai_lim_copilot"
+        version="1.0"
+        width="100%"
+        height="100%"
+        ub:resizable="true">
+  <name>AI LIM Copilot</name>
+  <description>AI-Enhanced OpenBoard Ecosystem — LIM-AI Copilot Widget</description>
+  <content src="index.html"/>
+</widget>
