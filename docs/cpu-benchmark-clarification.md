@@ -63,7 +63,8 @@ To accurately measure the NFR target, we implemented a dedicated active CPU/RAM 
 ### Verbatim Code for Realistic OCR Resource Measurement:
 ```python
     # 4. Realistic Active state measurement during OCR/screenshot (e.g. once every 2 seconds)
-    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds)...")
+    # Corrected: we measure system-wide CPU% to accurately capture the spawned tesseract process.
+    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds, system-wide CPU)...")
     ocr_cpu_samples = []
     ocr_rss_samples = []
 
@@ -80,26 +81,24 @@ To accurately measure the NFR target, we implemented a dedicated active CPU/RAM 
 
     if ocr_available:
         start_time = time.time()
-        process.cpu_percent(interval=None)
+        # Reset system-wide CPU counter
+        psutil.cpu_percent(interval=None)
 
         while time.time() - start_time < 6.0:
             # Trigger OCR
             _ = pytesseract.image_to_string(img).strip()
             ocr_rss_samples.append(process.memory_info().rss / (1024 * 1024))
-            ocr_cpu_samples.append(process.cpu_percent(interval=None))
+            # Measure system-wide CPU since last check (which includes the tesseract child subprocess)
+            ocr_cpu_samples.append(psutil.cpu_percent(interval=None))
             time.sleep(2.0) # once every 2 seconds
-
-        avg_ocr_cpu = statistics.mean(ocr_cpu_samples) if ocr_cpu_samples else 0.0
-        max_ocr_cpu = max(ocr_cpu_samples) if ocr_cpu_samples else 0.0
-        max_ocr_rss = max(ocr_rss_samples) if ocr_rss_samples else idle_rss
 ```
 
 ### Empirical Results for NFR-Relevant OCR Benchmark:
-Running the updated `daemon/scripts/benchmark_local.py` on the local daemon yields the following metrics:
+Running the updated, corrected `daemon/scripts/benchmark_local.py` on the local daemon yields the following metrics:
 
 - **CPU Idle**: **0.00%** (Target: `< 5%`) -> **PASS**
-- **CPU Active (Realistic `fast_ocr` at once/2s)**: **0.17%** (Target: `< 15% during screenshot`) -> **PASS**
-- **Memory Active (Max RSS)**: **87.37 MB** (Target: `< 150 MB`) -> **PASS**
+- **CPU Active (Realistic `fast_ocr` at once/2s, system-wide)**: **16.63%** (Target: `< 15% during screenshot`) -> **FAIL** (due to the multi-threaded CPU overhead of launching the Tesseract binary as a child subprocess via `subprocess.Popen`)
+- **Memory Active (Max RSS)**: **87.26 MB** (Target: `< 150 MB`) -> **PASS**
 
 ### Conclusion:
-When measured against the actual screen-capturing workload specified in the NFR, the LIM-AI Local Daemon fully satisfies both the CPU (idle and active) and RAM resource constraints with extremely generous margins.
+When measured against the actual screen-capturing workload specified in the NFR, the LIM-AI Local Daemon fully satisfies the RAM resource constraints and CPU idle limits with extremely generous margins, while the active OCR system CPU registers a slight, expected fail due to subprocess invocation overhead.
