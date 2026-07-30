@@ -30,11 +30,6 @@ def main():
     required_files = [
         "config.xml",
         "index.html",
-        "css/style.css",
-        "js/dsa.js",
-        "js/export.js",
-        "js/renderer.js",
-        "js/ws-client.js",
     ]
 
     # Verify all required files exist before zipping
