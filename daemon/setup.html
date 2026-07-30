@@ -46,7 +46,7 @@ document.getElementById("save").onclick = async () => {
 document.getElementById("test").onclick = async () => {
   showResult(null, "Verifica in corso...");
   const r = await fetch("/api/test-connection", { method: "POST" }); const d = await r.json();
-  if (d.status === "ok") showResult(true, `Connesso (${d.latency_ms} ms)`);
+  if (d.status === "ok") showResult(true, `${d.message || "Connesso"} (${d.latency_ms} ms)`);
   else showResult(false, d.message || "Connessione non riuscita");
 };
 function showResult(ok, msg) {
