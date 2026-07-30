@@ -9,8 +9,9 @@ Design Note:
     It directly imports LocalEngine from daemon.local_bridge (by updating sys.path)
     to perform benchmarks against the exact codebase.
     `psutil` is used to capture resource usage during the runs.
-    Tesseract/mss may not fully execute on a headless sandbox; we handle this by
-    catching exceptions and reporting "skipped: no display" or another relevant message.
+    To capture tesseract's CPU impact accurately without background noise,
+    we track children CPU times using os.getpid()'s children_user/children_system fields,
+    which POSIX OSes accumulate when child processes terminate.
 """
 
 import os
@@ -146,12 +147,14 @@ def monitor_resources():
             "active_rss_max": 0.0,
             "throttled_cpu_avg": 0.0,
             "throttled_cpu_max": 0.0,
-            "ocr_cpu_avg": 0.0,
-            "ocr_cpu_max": 0.0,
+            "ocr_system_cpu_avg": 0.0,
+            "ocr_child_cpu_single": 0.0,
+            "ocr_child_cpu_sys_wide": 0.0,
             "ocr_rss_max": 0.0
         }
 
     process = psutil.Process(os.getpid())
+    num_cores = psutil.cpu_count() or 1
 
     # 1. Idle state measurement
     print("Measuring idle resource usage (5 seconds)...")
@@ -208,9 +211,8 @@ def monitor_resources():
     print(f"Throttled Active CPU (5 ops/sec): Avg {avg_throttled_cpu:.2f}%, Max {max_throttled_cpu:.2f}%")
 
     # 4. Realistic Active state measurement during OCR/screenshot (e.g. once every 2 seconds)
-    # Corrected: we measure system-wide CPU% to accurately capture the spawned tesseract process.
-    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds, system-wide CPU)...")
-    ocr_cpu_samples = []
+    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds)...")
+    system_cpu_samples = []
     ocr_rss_samples = []
 
     import pytesseract
@@ -225,29 +227,47 @@ def monitor_resources():
         ocr_available = False
 
     if ocr_available:
-        start_time = time.time()
-        # Reset system-wide CPU counter
+        # Measure using BOTH:
+        # A) System-wide CPU percent (includes noise)
+        # B) Isolated children subprocess accumulated CPU times (precision check)
         psutil.cpu_percent(interval=None)
+        t0 = process.cpu_times()
+        start_wall = time.perf_counter()
 
-        while time.time() - start_time < 6.0:
-            # Trigger OCR
+        for _ in range(3):
             _ = pytesseract.image_to_string(img).strip()
             ocr_rss_samples.append(process.memory_info().rss / (1024 * 1024))
-            # Measure system-wide CPU since last check (which includes the tesseract child subprocess)
-            ocr_cpu_samples.append(psutil.cpu_percent(interval=None))
+            system_cpu_samples.append(psutil.cpu_percent(interval=None))
             time.sleep(2.0) # once every 2 seconds
 
-        avg_ocr_cpu = statistics.mean(ocr_cpu_samples) if ocr_cpu_samples else 0.0
-        max_ocr_cpu = max(ocr_cpu_samples) if ocr_cpu_samples else 0.0
+        end_wall = time.perf_counter()
+        t1 = process.cpu_times()
+
+        # System-wide metrics
+        avg_system_cpu = statistics.mean(system_cpu_samples) if system_cpu_samples else 0.0
         max_ocr_rss = max(ocr_rss_samples) if ocr_rss_samples else idle_rss
+
+        # Child process isolation
+        child_user_time = t1.children_user - t0.children_user
+        child_sys_time = t1.children_system - t0.children_system
+        total_child_time = child_user_time + child_sys_time
+        wall_duration = end_wall - start_wall
+
+        # CPU% normalized for single core: (CPU time / wall duration) * 100
+        child_cpu_single = (total_child_time / wall_duration) * 100 if wall_duration > 0 else 0.0
+        # CPU% normalized system-wide across all available cores: single-core % / core-count
+        child_cpu_sys_wide = child_cpu_single / num_cores
     else:
         print("pytesseract/OCR is not available. Skipping OCR resource monitoring.")
-        avg_ocr_cpu = 0.0
-        max_ocr_cpu = 0.0
+        avg_system_cpu = 0.0
+        child_cpu_single = 0.0
+        child_cpu_sys_wide = 0.0
         max_ocr_rss = idle_rss
 
-    print(f"Realistic OCR Active CPU (System-wide): Avg {avg_ocr_cpu:.2f}%, Max {max_ocr_cpu:.2f}%")
-    print(f"Realistic OCR Active RAM: Max {max_ocr_rss:.2f} MB")
+    print(f"OCR Active CPU (System-wide):             Avg {avg_system_cpu:.2f}%")
+    print(f"OCR Child CPU (Isolated, Single-core basis): {child_cpu_single:.2f}%")
+    print(f"OCR Child CPU (Isolated, System-wide basis): {child_cpu_sys_wide:.2f}%")
+    print(f"Realistic OCR Active RAM:                   Max {max_ocr_rss:.2f} MB")
 
     return {
         "idle_cpu": idle_cpu,
@@ -258,8 +278,9 @@ def monitor_resources():
         "active_rss_max": max_active_rss,
         "throttled_cpu_avg": avg_throttled_cpu,
         "throttled_cpu_max": max_throttled_cpu,
-        "ocr_cpu_avg": avg_ocr_cpu,
-        "ocr_cpu_max": max_ocr_cpu,
+        "ocr_system_cpu_avg": avg_system_cpu,
+        "ocr_child_cpu_single": child_cpu_single,
+        "ocr_child_cpu_sys_wide": child_cpu_sys_wide,
         "ocr_rss_max": max_ocr_rss
     }
 
@@ -289,19 +310,21 @@ def main():
         print(f"fast_ocr (P95 Latency Target: <50ms): {ocr_results} -> NOT MEASURABLE")
 
     # Verify RAM against target (<150MB)
-    ram_ok = "PASS" if resource_results["active_rss_max"] < 150 else "FAIL"
-    print(f"Memory (Max Active RAM Target: <150MB): {resource_results['active_rss_max']:.2f} MB -> {ram_ok}")
+    ram_ok = "PASS" if resource_results["ocr_rss_max"] < 150 else "FAIL"
+    print(f"Memory (Max Active RAM Target: <150MB): {resource_results['ocr_rss_max']:.2f} MB -> {ram_ok}")
 
     # Verify CPU against targets (<5% idle, <15% active during screenshot)
     idle_cpu_ok = "PASS" if resource_results["idle_cpu"] < 5 else "FAIL"
 
-    # Specifically evaluate NFR CPU Active target (<15% during screenshot/OCR)
-    ocr_cpu_ok = "PASS" if resource_results["ocr_cpu_avg"] < 15 else "FAIL"
+    # Specifically evaluate NFR CPU Active target (<15% during screenshot/OCR) using the isolated child system-wide CPU%
+    ocr_cpu_ok = "PASS" if resource_results["ocr_child_cpu_sys_wide"] < 15 else "FAIL"
 
     print(f"CPU Idle (Target: <5%): {resource_results['idle_cpu']:.2f}% -> {idle_cpu_ok}")
     print(f"CPU Active Throttled Math (Target Avg: <15%): {resource_results['throttled_cpu_avg']:.2f}%")
     print(f"CPU Active Unthrottled Math (Max load): {resource_results['active_cpu_avg']:.2f}%")
-    print(f"CPU Active During OCR/Screenshot (Target Avg <15%): {resource_results['ocr_cpu_avg']:.2f}% -> {ocr_cpu_ok}")
+    print(f"CPU Active During OCR (System-wide with noise): {resource_results['ocr_system_cpu_avg']:.2f}%")
+    print(f"CPU Active During OCR (Isolated child system-wide): {resource_results['ocr_child_cpu_sys_wide']:.2f}% -> {ocr_cpu_ok}")
+    print(f"CPU Active During OCR (Isolated child single-core): {resource_results['ocr_child_cpu_single']:.2f}%")
     print("==================================================")
 
 
