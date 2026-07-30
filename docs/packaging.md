@@ -10,11 +10,12 @@ We use Python 3.12 (specifically compatible with `>=3.11,<3.16` to meet PyInstal
 
 ### System Dependencies
 - **Linux (Ubuntu/Debian):**
-  The daemon requires `PortAudio` (for microphone audio capture via PyAudio) and `Tesseract OCR` (for screen-capture OCR) to be installed on the host OS.
-  ```bash
-  sudo apt-get update
-  sudo apt-get install -y portaudio19-dev tesseract-ocr
-  ```
+  - **For Development/Source Run:** The daemon requires `PortAudio` (for PyAudio compilation) and `Tesseract OCR` (for screen-capture OCR) installed on the host OS:
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y portaudio19-dev tesseract-ocr
+    ```
+  - **For Packaged Distribution:** PyInstaller automatically collects and bundles the compiled `libportaudio.so` library into the distribution folder (`_internal/libportaudio.so.2`). Therefore, IT staff do **not** need to install `portaudio19-dev` or `libportaudio` on target client machines running the packaged binary. However, they must still ensure that the external `tesseract-ocr` package is installed on the host since it is executed as an external process.
 
 - **Windows:**
   Install standard Python 3.12, and ensure Tesseract OCR is installed on the system (and added to the system PATH) for development.
