@@ -208,7 +208,8 @@ def monitor_resources():
     print(f"Throttled Active CPU (5 ops/sec): Avg {avg_throttled_cpu:.2f}%, Max {max_throttled_cpu:.2f}%")
 
     # 4. Realistic Active state measurement during OCR/screenshot (e.g. once every 2 seconds)
-    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds)...")
+    # Corrected: we measure system-wide CPU% to accurately capture the spawned tesseract process.
+    print("Measuring active resource usage with realistic teacher OCR usage (once every 2 seconds, 6 seconds, system-wide CPU)...")
     ocr_cpu_samples = []
     ocr_rss_samples = []
 
@@ -225,13 +226,15 @@ def monitor_resources():
 
     if ocr_available:
         start_time = time.time()
-        process.cpu_percent(interval=None)
+        # Reset system-wide CPU counter
+        psutil.cpu_percent(interval=None)
 
         while time.time() - start_time < 6.0:
             # Trigger OCR
             _ = pytesseract.image_to_string(img).strip()
             ocr_rss_samples.append(process.memory_info().rss / (1024 * 1024))
-            ocr_cpu_samples.append(process.cpu_percent(interval=None))
+            # Measure system-wide CPU since last check (which includes the tesseract child subprocess)
+            ocr_cpu_samples.append(psutil.cpu_percent(interval=None))
             time.sleep(2.0) # once every 2 seconds
 
         avg_ocr_cpu = statistics.mean(ocr_cpu_samples) if ocr_cpu_samples else 0.0
@@ -243,7 +246,7 @@ def monitor_resources():
         max_ocr_cpu = 0.0
         max_ocr_rss = idle_rss
 
-    print(f"Realistic OCR Active CPU: Avg {avg_ocr_cpu:.2f}%, Max {max_ocr_cpu:.2f}%")
+    print(f"Realistic OCR Active CPU (System-wide): Avg {avg_ocr_cpu:.2f}%, Max {max_ocr_cpu:.2f}%")
     print(f"Realistic OCR Active RAM: Max {max_ocr_rss:.2f} MB")
 
     return {
