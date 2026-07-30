@@ -11,14 +11,11 @@ import sympy as sp
 import pytesseract
 import hashlib
 import os
+import sys
 from fastapi.staticfiles import StaticFiles
 
 # Import the configuration settings and routes router dynamically
-from settings_api import (
-    probe_remote_base_url,
-    settings,
-    router as settings_router,
-)
+from settings_api import settings, router as settings_router
 
 # Configure standard logger following AGENTS.md
 logging.basicConfig(
@@ -593,12 +590,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Heartbeat check dal Widget using dynamically read remote_base_url
                 if action == "ping_remote":
                     try:
-                        probe = await probe_remote_base_url(
-                            base_url=settings.remote_base_url,
-                            api_key=settings.api_key,
-                            timeout_seconds=2.5,
+                        resp = await http_client.get(
+                            f"{settings.remote_base_url}/health",
+                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
                         )
-                        if probe["ok"]:
+                        if resp.status_code == 200:
                             await websocket.send_text(
                                 json.dumps({"type": "pong_remote"})
                             )
@@ -691,6 +687,17 @@ async def websocket_endpoint(websocket: WebSocket):
         finally:
             # Clean up the transcription stream on websocket disconnection
             await transcription_session.stop()
+
+
+def configure_tesseract_path() -> None:
+    """Configures Pytesseract command path dynamically when running inside a PyInstaller package (frozen)."""
+    if getattr(sys, "frozen", False):
+        mei_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        bundled_tesseract_path = os.path.join(mei_dir, "tesseract", "tesseract.exe")
+        pytesseract.pytesseract.tesseract_cmd = bundled_tesseract_path
+
+
+configure_tesseract_path()
 
 
 if __name__ == "__main__":

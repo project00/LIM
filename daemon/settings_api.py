@@ -21,11 +21,6 @@ from pydantic import BaseModel
 
 # Initialize standard logging following AGENTS.md guidelines
 logger = logging.getLogger("daemon_settings_api")
-PROBE_CANDIDATES = (
-    ("health", "/health"),
-    ("ollama", "/api/tags"),
-    ("base", ""),
-)
 
 router = APIRouter()
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
@@ -71,109 +66,6 @@ def save_settings(s: DaemonSettings) -> None:
         logger.info("Configuration successfully written to config.yaml.")
     except Exception as e:
         logger.error("Failed to write to config.yaml: %s", e)
-
-
-def build_auth_headers(api_key: str) -> dict[str, str]:
-    """Builds Authorization headers only when an API key is configured."""
-    if api_key.strip():
-        return {"Authorization": f"Bearer {api_key}"}
-    return {}
-
-
-async def probe_remote_base_url(
-    base_url: str,
-    api_key: str,
-    timeout_seconds: float = 3.0,
-) -> dict:
-    """
-    Tests reachability of the configured remote base URL.
-
-    Design Note:
-        The original implementation only probed `<base>/health`, which works for the
-        project FastAPI server but incorrectly reports a failure for alternative local
-        endpoints such as Ollama (`http://localhost:11434`) that expose other probe
-        paths like `/api/tags`. We now try a short ordered list of well-known probe
-        endpoints and accept the first successful 2xx response.
-
-    Args:
-        base_url: Base URL configured by the user.
-        api_key: Optional bearer token.
-        timeout_seconds: HTTP timeout used for each probe request.
-
-    Returns:
-        A dictionary containing:
-        - `ok`: whether the target is reachable through a supported probe.
-        - `latency_ms`: elapsed milliseconds when available.
-        - `probe_label`: matched probe type (`health`, `ollama`, `base`) on success.
-        - `message`: user-friendly diagnostic when no probe succeeded.
-    """
-    start = time.perf_counter()
-    headers = build_auth_headers(api_key)
-    normalized_base_url = base_url.rstrip("/")
-    last_status_code: int | None = None
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout_seconds,
-            follow_redirects=True,
-        ) as client:
-            for probe_label, suffix in PROBE_CANDIDATES:
-                probe_url = normalized_base_url if not suffix else f"{normalized_base_url}{suffix}"
-                try:
-                    resp = await client.get(probe_url, headers=headers)
-                except (httpx.ConnectError, httpx.TimeoutException):
-                    continue
-
-                last_status_code = resp.status_code
-                latency_ms = round((time.perf_counter() - start) * 1000)
-
-                if 200 <= resp.status_code < 300:
-                    return {
-                        "ok": True,
-                        "latency_ms": latency_ms,
-                        "probe_label": probe_label,
-                        "message": f"Endpoint raggiungibile tramite '{probe_label}'.",
-                    }
-
-                if resp.status_code == 404:
-                    continue
-
-                if resp.status_code in (401, 403):
-                    return {
-                        "ok": False,
-                        "latency_ms": latency_ms,
-                        "probe_label": probe_label,
-                        "message": (
-                            "Endpoint raggiungibile, ma autenticazione rifiutata "
-                            f"(HTTP {resp.status_code})."
-                        ),
-                    }
-
-                return {
-                    "ok": False,
-                    "latency_ms": latency_ms,
-                    "probe_label": probe_label,
-                    "message": (
-                        "Endpoint raggiungibile, ma ha restituito una risposta inattesa "
-                        f"(HTTP {resp.status_code})."
-                    ),
-                }
-    except Exception as e:
-        logger.warning("Unexpected remote probe failure for '%s': %s", normalized_base_url, e)
-
-    message = "Server remoto non raggiungibile"
-    if last_status_code == 404:
-        message = (
-            "Host raggiungibile, ma nessuno degli endpoint supportati "
-            "(/health, /api/tags, /) ha risposto correttamente."
-        )
-
-    return {
-        "ok": False,
-        "latency_ms": None,
-        "probe_label": None,
-        "message": message,
-    }
 
 
 # Globally shared setting state in memory, as required by design
@@ -246,25 +138,27 @@ async def test_connection() -> dict:
         A response containing status, latency_ms and optional error messages.
     """
     logger.info("Testing connection to remote server: %s", settings.remote_base_url)
-    probe = await probe_remote_base_url(
-        base_url=settings.remote_base_url,
-        api_key=settings.api_key,
-        timeout_seconds=3.0,
-    )
-    if probe["ok"]:
-        logger.info(
-            "Remote server probe succeeded using '%s'.",
-            probe["probe_label"],
-        )
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{settings.remote_base_url}/health",
+                headers={"Authorization": f"Bearer {settings.api_key}"},
+            )
+        latency_ms = round((time.perf_counter() - start) * 1000)
+        if resp.status_code == 200:
+            logger.info("Remote server health-check succeeded: 200 OK.")
+            return {"status": "ok", "latency_ms": latency_ms}
+        logger.warning("Remote server health-check failed with HTTP: %s", resp.status_code)
         return {
-            "status": "ok",
-            "latency_ms": probe["latency_ms"],
-            "message": probe["message"],
+            "status": "error",
+            "latency_ms": latency_ms,
+            "message": f"HTTP {resp.status_code}",
         }
-
-    logger.warning("Remote server connection test failed: %s", probe["message"])
-    return {
-        "status": "error",
-        "latency_ms": probe["latency_ms"],
-        "message": probe["message"],
-    }
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning("Remote server connection test failed: %s", e)
+        return {
+            "status": "error",
+            "latency_ms": None,
+            "message": "Server remoto non raggiungibile",
+        }
