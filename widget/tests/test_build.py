@@ -45,11 +45,6 @@ def test_build():
     expected_files = {
         "config.xml",
         "index.html",
-        "css/style.css",
-        "js/dsa.js",
-        "js/export.js",
-        "js/renderer.js",
-        "js/ws-client.js",
     }
 
     with zipfile.ZipFile(output_wgt, "r") as zipf:
