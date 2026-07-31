@@ -25,6 +25,10 @@ daemon/model_cache/
 server/model_cache/
 daemon/tesseract/
 
+# Node modules
+node_modules/
+**/node_modules/
+
 # Packaged widget artifacts and build directories
 dist/
 build/
