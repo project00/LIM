@@ -53,54 +53,58 @@
 </head>
 <body>
 
-    <div class="header">
-        <span style="font-weight:bold; font-size:14px;">AI LIM Copilot</span>
-        <span id="status-badge" class="status-badge status-offline">🔴 Connessione...</span>
-    </div>
-
-    <div id="toast-banner"></div>
-    <div id="subtitles-bar">🎙️ Live STT: In attesa di input audio...</div>
-
-    <div class="toolbar">
-        <button onclick="toggleInputFlow('math')">📐 Math SymPy</button>
-        <button onclick="triggerOCR()">📷 OCR</button>
-        <button class="remote-only" data-name="🧠 Mappa" onclick="toggleInputFlow('mappa')">🧠 Mappa</button>
-        <button class="remote-only" data-name="🧊 3D Model" onclick="toggleInputFlow('model')">🧊 3D Model</button>
-        <button class="remote-only" data-name="❓ Quiz" onclick="triggerQuiz()">❓ Quiz</button>
-        <button class="remote-only" data-name="📋 Riassumi Lezione" onclick="triggerSummary()">📋 Riassumi Lezione</button>
-        <button onclick="exportToPDF()">📄 Esporta PDF</button>
-        <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
-        <select id="subtitle-language" onchange="handleLanguageChange()">
-            <option value="">Nessuna traduzione</option>
-            <option value="en">Inglese</option>
-            <option value="fr">Francese</option>
-            <option value="de">Tedesco</option>
-            <option value="es">Spagnolo</option>
-        </select>
-        <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
-    </div>
-
-    <div id="inputs-area" style="display: none; background: #242535; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #45475a;">
-        <div id="flow-math" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">📐 Inserisci Espressione Matematica:</span>
-            <input type="text" id="input-math" placeholder="es. 2*x + 6 - 12" onkeydown="if(event.key === 'Enter') submitMath()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
-            <button onclick="submitMath()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Calcola</button>
+    <header aria-label="Intestazione e pannello di controllo">
+        <div class="header">
+            <h1 style="font-weight:bold; font-size:14px; margin: 0;">AI LIM Copilot</h1>
+            <span id="status-badge" class="status-badge status-offline">🔴 Connessione...</span>
         </div>
-        <div id="flow-mappa" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧠 Argomento della Mappa:</span>
-            <input type="text" id="input-mappa" placeholder="es. apparato circolatorio" onkeydown="if(event.key === 'Enter') submitMappa()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
-            <button onclick="submitMappa()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Genera</button>
-        </div>
-        <div id="flow-model" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧊 Nome Modello 3D:</span>
-            <input type="text" id="input-model" placeholder="es. molecola acqua H2O" onkeydown="if(event.key === 'Enter') submitModel()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
-            <button onclick="submitModel()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Cerca</button>
-        </div>
-    </div>
 
-    <div id="output-container">
-        <div id="output">Seleziona un'azione per iniziare.</div>
-    </div>
+        <div id="toast-banner" role="alert" aria-live="assertive"></div>
+        <div id="subtitles-bar" aria-live="polite" role="status" aria-atomic="false">🎙️ Live STT: In attesa di input audio...</div>
+
+        <nav class="toolbar" aria-label="Azioni del Copilota">
+            <button onclick="toggleInputFlow('math')">📐 Math SymPy</button>
+            <button onclick="triggerOCR()">📷 OCR</button>
+            <button class="remote-only" data-name="🧠 Mappa" onclick="toggleInputFlow('mappa')">🧠 Mappa</button>
+            <button class="remote-only" data-name="🧊 3D Model" onclick="toggleInputFlow('model')">🧊 3D Model</button>
+            <button class="remote-only" data-name="❓ Quiz" onclick="triggerQuiz()">❓ Quiz</button>
+            <button class="remote-only" data-name="📋 Riassumi Lezione" onclick="triggerSummary()">📋 Riassumi Lezione</button>
+            <button onclick="exportToPDF()">📄 Esporta PDF</button>
+            <button id="btn-subtitles" onclick="toggleSubtitles()">🎙️ Sottotitoli</button>
+            <select id="subtitle-language" onchange="handleLanguageChange()" aria-label="Lingua dei sottotitoli">
+                <option value="">Nessuna traduzione</option>
+                <option value="en">Inglese</option>
+                <option value="fr">Francese</option>
+                <option value="de">Tedesco</option>
+                <option value="es">Spagnolo</option>
+            </select>
+            <button class="dsa" onclick="toggleDSA()">👁️ DSA Mode</button>
+        </nav>
+    </header>
+
+    <main id="main-content">
+        <div id="inputs-area" style="display: none; background: #242535; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #45475a;">
+            <div id="flow-math" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">📐 Inserisci Espressione Matematica:</span>
+                <input type="text" id="input-math" placeholder="es. 2*x + 6 - 12" aria-label="Inserisci Espressione Matematica" onkeydown="if(event.key === 'Enter') submitMath()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+                <button onclick="submitMath()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Calcola</button>
+            </div>
+            <div id="flow-mappa" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧠 Argomento della Mappa:</span>
+                <input type="text" id="input-mappa" placeholder="es. apparato circolatorio" aria-label="Argomento della Mappa" onkeydown="if(event.key === 'Enter') submitMappa()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+                <button onclick="submitMappa()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Genera</button>
+            </div>
+            <div id="flow-model" class="input-flow" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 13px; font-weight: bold; color: #cdd6f4;">🧊 Nome Modello 3D:</span>
+                <input type="text" id="input-model" placeholder="es. molecola acqua H2O" aria-label="Nome Modello 3D" onkeydown="if(event.key === 'Enter') submitModel()" style="flex-grow: 1; min-width: 200px; padding: 10px 14px; border-radius: 6px; border: 1px solid #45475a; background: #181825; color: #cdd6f4; font-size: 14px; height: 42px; box-sizing: border-box;">
+                <button onclick="submitModel()" style="height: 42px; padding: 0 20px; background: #a6e3a1; color: #11111b; font-weight: bold; font-size: 14px; border: none; border-radius: 6px; cursor: pointer;">Cerca</button>
+            </div>
+        </div>
+
+        <div id="output-container">
+            <div id="output">Seleziona un'azione per iniziare.</div>
+        </div>
+    </main>
 
     <script>
         mermaid.initialize({ startOnLoad: false, theme: 'dark' });
@@ -348,7 +352,7 @@
                     html += `<p><b>${i+1}. ${q.question}</b></p>`;
                     html += `<div class="quiz-question" id="quiz-q-${i}">`;
                     q.options.forEach((opt, j) => {
-                        html += `<label id="quiz-q-${i}-lbl-${j}"><input type="radio" name="q${i}" value="${j}"> ${escapeHTML(opt)}</label><br>`;
+                        html += `<label id="quiz-q-${i}-lbl-${j}"><input type="radio" name="q${i}" value="${j}" aria-label="${escapeHTML(opt)}"> ${escapeHTML(opt)}</label><br>`;
                     });
                     html += `</div>`;
                 });
