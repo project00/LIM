@@ -370,6 +370,60 @@ async def test_start_transcription_double_start() -> None:
             await asyncio.sleep(0.05)
 
 
+@pytest.mark.asyncio
+async def test_transcription_disconnect_safety() -> None:
+    """
+    Tests that a WebSocketDisconnect or a Starlette RuntimeError disconnect
+    thrown during an active transcription capture session is caught and handled
+    gracefully, stopping the loop cleanly and calling stop() without throwing
+    unhandled exceptions or error logging.
+    """
+    from local_bridge import TranscriptionSession
+    from fastapi import WebSocketDisconnect
+
+    mock_ws = AsyncMock()
+    # Raise WebSocketDisconnect when sending data
+    mock_ws.send_text.side_effect = WebSocketDisconnect()
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    remote_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Buongiorno classe",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("local_bridge.logger") as mock_logger:
+
+        mock_post.return_value = mock_resp
+
+        session = TranscriptionSession()
+        await session.start(mock_ws, "en", None)
+
+        # Allow the task and its loop to execute the first chunk
+        # which will trigger post and then send_and_backup -> raises WebSocketDisconnect
+        await asyncio.sleep(0.1)
+
+        # Ensure the PyAudio mock stream and session have stopped cleanly
+        await session.stop()
+
+        # Check that we logged a graceful stop message at info level,
+        # and NOT an unhandled error/exception traceback.
+        info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
+        error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+
+        assert any("Widget disconnesso" in msg or "arresto" in msg for msg in info_calls)
+        assert not any("Errore non gestito" in msg for msg in error_calls)
+
+
 def test_tesseract_cmd_path_selection_packaged() -> None:
     """Tests that sys.frozen packaged mode correctly overrides pytesseract's tesseract_cmd path."""
     import sys

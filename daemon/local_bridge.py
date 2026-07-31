@@ -14,6 +14,19 @@ import os
 import sys
 from fastapi.staticfiles import StaticFiles
 
+def is_disconnect_exception(e: Exception) -> bool:
+    """
+    Helper to identify common websocket/client disconnection exceptions
+    from Starlette/FastAPI/Uvicorn to handle them gracefully.
+    """
+    if isinstance(e, WebSocketDisconnect):
+        return True
+    if isinstance(e, RuntimeError):
+        msg = str(e).lower()
+        if "is not connected" in msg or "disconnected" in msg or "unexpected asgi message" in msg:
+            return True
+    return False
+
 # Import the configuration settings and routes router dynamically
 from settings_api import settings, router as settings_router
 
@@ -119,7 +132,13 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
     appends it as a single JSON line to the session's backup file.
     """
     message_str = message if isinstance(message, str) else json.dumps(message)
-    await websocket.send_text(message_str)
+    try:
+        await websocket.send_text(message_str)
+    except Exception as e:
+        if is_disconnect_exception(e):
+            logger.info("Widget disconnesso durante l'invio (send_and_backup), arresto pulito.")
+            raise WebSocketDisconnect()
+        raise
 
     # Return early and bypass file writing if backup is disabled in settings
     if settings.disable_local_backup:
@@ -524,6 +543,10 @@ class TranscriptionSession:
                                         f"Failed to send system_warning to websocket: {ws_err}"
                                     )
                         except Exception as e:
+                            if is_disconnect_exception(e):
+                                logger.info("Widget disconnesso durante l'invio della trascrizione, arresto del loop.")
+                                self.is_running = False
+                                break
                             logger.error(
                                 f"Errore non gestito durante l'invio della trascrizione: {e}",
                                 exc_info=True
@@ -532,7 +555,10 @@ class TranscriptionSession:
         except asyncio.CancelledError:
             logger.info("Microphone capture loop background task cancelled.")
         except Exception as e:
-            logger.error(f"Error in microphone capture loop: {e}")
+            if is_disconnect_exception(e) or isinstance(e, WebSocketDisconnect):
+                logger.info("Widget disconnesso durante l'ascolto, arresto del loop di cattura.")
+            else:
+                logger.error(f"Error in microphone capture loop: {e}")
         finally:
             logger.info("Microphone capture loop finished.")
 
@@ -684,6 +710,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
         except WebSocketDisconnect:
             logger.info("Widget disconnesso.")
+        except Exception as e:
+            if is_disconnect_exception(e):
+                logger.info("Widget disconnesso (eccezione di disconnessione rilevata nel loop principale).")
+            else:
+                logger.error(f"Errore imprevisto nel loop websocket: {e}", exc_info=True)
         finally:
             # Clean up the transcription stream on websocket disconnection
             await transcription_session.stop()
