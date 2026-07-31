@@ -385,7 +385,8 @@
                             const lbl = document.getElementById(`quiz-q-${i}-lbl-${rIdx}`);
                             if (!lbl) return;
                             if (rIdx === correctIdx) {
-                                // Mark correct option in green
+                                // Mark correct option in green with checkmark
+                                lbl.innerHTML = `✓ ${lbl.innerHTML} <b>[Corretto]</b>`;
                                 lbl.style.backgroundColor = "rgba(166, 227, 161, 0.3)";
                                 lbl.style.color = "#a6e3a1";
                                 lbl.style.fontWeight = "bold";
@@ -393,7 +394,8 @@
                                 lbl.style.padding = "2px 6px";
                                 lbl.style.display = "inline-block";
                             } else if (rIdx === selectedIdx) {
-                                // Student picked wrong option - mark in red
+                                // Student picked wrong option - mark in red with crossmark
+                                lbl.innerHTML = `✗ ${lbl.innerHTML} <b>[Scelta errata]</b>`;
                                 lbl.style.backgroundColor = "rgba(243, 139, 168, 0.3)";
                                 lbl.style.color = "#f38ba8";
                                 lbl.style.borderRadius = "4px";

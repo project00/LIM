@@ -108,6 +108,9 @@ To achieve full compliance with WCAG 2.1 AA in both empty and dynamic states, th
    - Explicitly added **`aria-live="polite" role="status" aria-atomic="false"`** to the `#subtitles-bar` subtitle output block.
    - This ensures that when a new subtitle chunk is transcribed or translated, screen readers automatically announce the new text politely to deaf/hard-of-hearing students without interrupting active selections or navigation.
 
+5. **Non-Color Indicators (Quiz Verification)**:
+   - Appended non-color glyphs (`✓` and `✗`) alongside explicit textual labels (`[Corretto]` and `[Scelta errata]`) to correct/incorrect option labels on quiz verification, meeting WCAG 1.4.1 Success Criterion (Level A).
+
 ---
 
 ## 3. Dynamic States Accessibility Audits (Playwright + Axe-Core)
@@ -320,3 +323,6 @@ While the automated Playwright + axe-core suite confirms complete compliance reg
 
 - **Structural vs. Behavioral**: Axe-core evaluates structural HTML markup, label presence, and semantic validity. It **cannot** verify the actual acoustic or focus rendering of active screen reader software (such as NVDA, JAWS, or VoiceOver).
 - **Manual Verification Debt**: Complete and final user-experience validation requires a manual pass with actual screen readers operated by a human user (simulating focus navigation and speech synthesis). This is cataloged as a hardware-dependent manual testing step, mirroring the SpeechRecognition/micro-capture verification Category.
+- **Manual Success Criterion 1.4.1 (Use of Color)**:
+  - Automated tools (axe-core) cannot reliably check whether color is the only indicator of a state change (such as quiz correctness).
+  - Therefore, verifying Success Criterion 1.4.1 is tracked as an explicit manual/static review item. Future quiz-related UI modifications must always be visually re-checked by eye to guarantee that correct/incorrect states are never indicated solely by green/red background/text color, but always carry distinct text/symbols (`✓ [Corretto]` or `✗ [Scelta errata]`).
