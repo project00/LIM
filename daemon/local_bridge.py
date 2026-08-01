@@ -174,6 +174,28 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
         logger.error(f"Failed to write to backup file {backup_path}: {e}")
 
 
+def attach_active_credentials(payload: dict) -> None:
+    """Helper to attach active LLM and Sketchfab credentials from settings into the request payload."""
+    active_llm = next((c for c in settings.credentials if c.enabled and c.type in ("llm_cloud", "llm_ollama")), None)
+    active_sf = next((c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None)
+
+    daemon_credentials = {}
+    if active_llm:
+        daemon_credentials["llm"] = {
+            "type": active_llm.type,
+            "model": active_llm.model,
+            "api_key": active_llm.api_key,
+            "api_base": active_llm.api_base
+        }
+    if active_sf:
+        daemon_credentials["sketchfab"] = {
+            "access_token": active_sf.access_token
+        }
+
+    if daemon_credentials:
+        payload["credentials"] = daemon_credentials
+
+
 class RouteTarget(Enum):
     LOCAL = "local"
     REMOTE = "remote"
@@ -501,6 +523,7 @@ class TranscriptionSession:
                                 "target_language": self.target_language
                             }
                         }
+                        attach_active_credentials(payload)
 
                         headers = {}
                         if settings.api_key:
@@ -682,6 +705,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # --- ROUTE REMOTA ---
                 elif target == RouteTarget.REMOTE:
+                    attach_active_credentials(payload)
                     try:
                         if action == "load_3d_model":
                             query = payload.get("data", {}).get("query")

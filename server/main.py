@@ -183,6 +183,9 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
     action = payload.get("action")
     logger.info("Authenticated analyze request with payload action: %s", action)
 
+    # Extract credentials from payload if present
+    credentials = payload.get("credentials") or {}
+
     if action == "concept_map":
         data_obj = payload.get("data") or {}
         topic = data_obj.get("topic")
@@ -195,7 +198,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
 
         try:
             # Call the real concept map generator using LiteLLM
-            mermaid_code = generate_concept_map(topic, language)
+            mermaid_code = generate_concept_map(topic, language, credentials)
 
             return {
                 "type": "concept_map",
@@ -221,7 +224,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             )
 
         try:
-            model_metadata = search_and_fetch_3d_model(query)
+            model_metadata = search_and_fetch_3d_model(query, credentials)
             return {
                 "type": "model_3d",
                 "source": "remote_index",
@@ -260,7 +263,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 num_questions = 4
 
         try:
-            questions = generate_quiz(lesson_context, num_questions)
+            questions = generate_quiz(lesson_context, num_questions, credentials)
             return {
                 "type": "quiz",
                 "source": "remote_llm",
@@ -310,7 +313,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             translated_text = None
             if target_language:
                 try:
-                    translated_text = translate_text(text, str(target_language))
+                    translated_text = translate_text(text, str(target_language), credentials)
                 except openai.OpenAIError as e:
                     logger.error(
                         f"Translation failed due to LLM provider error: {e}",
@@ -343,7 +346,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             }
 
         try:
-            summary_text = generate_summary(lesson_log)
+            summary_text = generate_summary(lesson_log, credentials)
             return {
                 "type": "summary",
                 "source": "remote_llm",

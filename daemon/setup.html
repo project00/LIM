@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>LIM-AI Copilot — Impostazioni</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #1e1e2e; color: #cdd6f4; max-width: 420px; margin: 40px auto; padding: 0 16px; }
+  body { font-family: Arial, sans-serif; background: #1e1e2e; color: #cdd6f4; max-width: 420px; margin: 40px auto; padding: 0 16px; padding-bottom: 60px; }
   label { display:block; margin-top:14px; font-size:13px; }
   input { width:100%; box-sizing:border-box; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #45475a; background:#181825; color:#cdd6f4; }
   button { margin-top:16px; padding:10px 14px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; }
@@ -13,6 +13,17 @@
   #result { margin-top:12px; font-size:13px; padding:8px; border-radius:6px; display:none; }
   .ok { background:#a6e3a1; color:#11111b; }
   .err { background:#f38ba8; color:#11111b; }
+
+  /* Credenziali styling */
+  .section-title { font-size: 18px; margin-top: 24px; border-top: 1px solid #45475a; padding-top: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #313244; }
+  th { color: #89b4fa; }
+  .add-form { background: #181825; padding: 12px; border-radius: 8px; margin-top: 14px; border: 1px solid #313244; }
+  .add-form h3 { margin: 0 0 10px 0; font-size: 14px; color: #f9e2af; }
+  .cond-field { display: none; }
+  .action-btn { background: none; border: none; font-size: 16px; cursor: pointer; color: #f38ba8; }
+  .inline-btn { background: #a6e3a1; color: #11111b; padding: 6px 10px; margin-top: 10px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -26,6 +37,68 @@
   <button id="save">💾 Salva</button>
   <button id="test">🔌 Verifica Connessione</button>
   <div id="result"></div>
+
+  <!-- Credentials Management System -->
+  <h2 class="section-title">🔑 Gestione Credenziali</h2>
+  <table id="credentials-table">
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>Tipo</th>
+        <th>Valore</th>
+        <th>Abilitato</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="credentials-list">
+      <!-- Dynamically populated -->
+    </tbody>
+  </table>
+
+  <div class="add-form">
+    <h3>+ Aggiungi Credenziale</h3>
+    <label>Nome Credenziale
+      <input id="cred-name" placeholder="es. OpenAI Scuola / Ollama locale" required>
+    </label>
+    <label>Tipo
+      <select id="cred-type" style="width:100%; box-sizing:border-box; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #45475a; background:#181825; color:#cdd6f4;">
+        <option value="llm_cloud">LLM Cloud (OpenAI)</option>
+        <option value="llm_ollama">LLM Ollama (locale)</option>
+        <option value="sketchfab">Sketchfab</option>
+      </select>
+    </label>
+
+    <div id="fields-llm-cloud" class="cond-field" style="display: block;">
+      <label>Modello (es. gpt-4o, gpt-4o-mini)
+        <input id="cloud-model" placeholder="gpt-4o-mini">
+      </label>
+      <label>API Key
+        <input id="cloud-key" type="password" placeholder="sk-...">
+      </label>
+      <label>API Base URL (opzionale)
+        <input id="cloud-base" placeholder="https://api.openai.com/v1">
+      </label>
+    </div>
+
+    <div id="fields-llm-ollama" class="cond-field">
+      <label>Modello (es. ollama/llama3.1, ollama/mistral)
+        <input id="ollama-model" placeholder="ollama/llama3.1">
+      </label>
+      <label>API Base URL (es. http://localhost:11434)
+        <input id="ollama-base" placeholder="http://localhost:11434">
+      </label>
+      <p style="font-size: 11px; color: #a6e3a1; margin-top: 4px; margin-bottom: 0;">* nessuna API key necessaria per Ollama</p>
+    </div>
+
+    <div id="fields-sketchfab" class="cond-field">
+      <label>Access Token (Sketchfab V3)
+        <input id="sketchfab-token" type="password" placeholder="token...">
+      </label>
+    </div>
+
+    <button id="add-cred-btn" class="inline-btn">➕ Aggiungi</button>
+  </div>
+
 <script>
 async function loadConfig() {
   const r = await fetch("/api/config"); const d = await r.json();
@@ -55,7 +128,139 @@ function showResult(ok, msg) {
   el.className = ok === null ? "" : (ok ? "ok" : "err");
   el.innerText = msg;
 }
+
+// Toggle conditional fields based on chosen type
+const credTypeSelect = document.getElementById("cred-type");
+credTypeSelect.onchange = () => {
+  const type = credTypeSelect.value;
+  document.getElementById("fields-llm-cloud").style.display = type === "llm_cloud" ? "block" : "none";
+  document.getElementById("fields-llm-ollama").style.display = type === "llm_ollama" ? "block" : "none";
+  document.getElementById("fields-sketchfab").style.display = type === "sketchfab" ? "block" : "none";
+};
+
+// Fetch and display all credentials
+async function loadCredentials() {
+  const tbody = document.getElementById("credentials-list");
+  tbody.innerHTML = "";
+  try {
+    const r = await fetch("/api/credentials");
+    const creds = await r.json();
+    if (creds.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#89b4fa; padding:10px;">Nessuna credenziale salvata</td></tr>`;
+      return;
+    }
+    creds.forEach(c => {
+      const tr = document.createElement("tr");
+
+      // Resolve masked value to display
+      let valDisplay = "";
+      if (c.type === "llm_cloud") {
+        valDisplay = c.api_key_masked || "No key";
+      } else if (c.type === "llm_ollama") {
+        valDisplay = c.api_base || "No base";
+      } else if (c.type === "sketchfab") {
+        valDisplay = c.access_token_masked || "No token";
+      }
+
+      // Readable type mapping
+      let typeLabel = "";
+      if (c.type === "llm_cloud") typeLabel = "Cloud LLM";
+      else if (c.type === "llm_ollama") typeLabel = "Ollama";
+      else if (c.type === "sketchfab") typeLabel = "Sketchfab";
+
+      tr.innerHTML = `
+        <td><strong>${c.name}</strong></td>
+        <td>${typeLabel}</td>
+        <td style="font-family:monospace; font-size:11px;">${valDisplay}</td>
+        <td>
+          <input type="checkbox" style="width:auto; margin:0;" ${c.enabled ? "checked" : ""} data-id="${c.id}" class="toggle-enabled-cb">
+        </td>
+        <td style="text-align:center;">
+          <button class="action-btn delete-btn" data-id="${c.id}">🗑️</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Wire up checkbox toggles calling PATCH immediately
+    document.querySelectorAll(".toggle-enabled-cb").forEach(cb => {
+      cb.onchange = async (e) => {
+        const id = e.target.getAttribute("data-id");
+        const enabled = e.target.checked;
+        await fetch(`/api/credentials/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled })
+        });
+        showResult(true, "Stato credenziale aggiornato.");
+        await loadCredentials(); // Refresh to reflect mutual exclusivity modifications
+      };
+    });
+
+    // Wire up delete buttons
+    document.querySelectorAll(".delete-btn").forEach(btn => {
+      btn.onclick = async (e) => {
+        const id = btn.getAttribute("data-id");
+        if (confirm("Sei sicuro di voler eliminare questa credenziale?")) {
+          await fetch(`/api/credentials/${id}`, { method: "DELETE" });
+          showResult(true, "Credenziale eliminata.");
+          await loadCredentials();
+        }
+      };
+    });
+
+  } catch (err) {
+    console.error("Failed to load credentials:", err);
+  }
+}
+
+// Handler for adding a new credential
+document.getElementById("add-cred-btn").onclick = async () => {
+  const name = document.getElementById("cred-name").value.trim();
+  if (!name) {
+    alert("Inserisci un nome per la credenziale.");
+    return;
+  }
+  const type = credTypeSelect.value;
+  const body = { name, type, enabled: false };
+
+  if (type === "llm_cloud") {
+    body.model = document.getElementById("cloud-model").value.trim() || "gpt-4o-mini";
+    body.api_key = document.getElementById("cloud-key").value.trim() || null;
+    body.api_base = document.getElementById("cloud-base").value.trim() || null;
+  } else if (type === "llm_ollama") {
+    body.model = document.getElementById("ollama-model").value.trim() || "ollama/llama3.1";
+    body.api_base = document.getElementById("ollama-base").value.trim() || "http://localhost:11434";
+  } else if (type === "sketchfab") {
+    body.access_token = document.getElementById("sketchfab-token").value.trim() || null;
+  }
+
+  try {
+    const r = await fetch("/api/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const res = await r.json();
+    if (res.status === "created") {
+      showResult(true, "Credenziale aggiunta con successo.");
+      // Reset inputs
+      document.getElementById("cred-name").value = "";
+      document.getElementById("cloud-key").value = "";
+      document.getElementById("cloud-base").value = "";
+      document.getElementById("ollama-base").value = "";
+      document.getElementById("sketchfab-token").value = "";
+      await loadCredentials();
+    } else {
+      showResult(false, "Impossibile aggiungere credenziale.");
+    }
+  } catch (err) {
+    showResult(false, `Errore durante il salvataggio: ${err}`);
+  }
+};
+
 loadConfig();
+loadCredentials();
 </script>
 </body>
 </html>
