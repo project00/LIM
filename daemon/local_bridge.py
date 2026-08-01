@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import datetime
+import math
+import struct
 from enum import Enum
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import httpx
@@ -438,6 +440,18 @@ class LocalEngine:
             }
 
 
+def compute_rms(chunk_bytes: bytes) -> float:
+    """Computes the Root Mean Square (RMS) amplitude of signed 16-bit PCM bytes."""
+    num_samples = len(chunk_bytes) // 2
+    if num_samples == 0:
+        return 0.0
+    fmt = f"<{num_samples}h"
+    samples = struct.unpack(fmt, chunk_bytes)
+    sum_squares = sum(s * s for s in samples)
+    mean_squares = sum_squares / num_samples
+    return math.sqrt(mean_squares)
+
+
 class TranscriptionSession:
     """
     Design Note:
@@ -545,11 +559,21 @@ class TranscriptionSession:
                         chunk_to_process = buffer[:target_bytes]
                         buffer = buffer[target_bytes:]
 
+                        # Compute RMS amplitude of the chunk to detect silence
+                        rms_val = compute_rms(chunk_to_process)
+                        if rms_val < settings.silence_rms_threshold:
+                            logger.debug(
+                                f"[Audio Capture] Skipped silent chunk: RMS={rms_val:.1f} "
+                                f"below threshold={settings.silence_rms_threshold}"
+                            )
+                            await asyncio.sleep(0.01) # Safe yield to prevent tight loop CPU starvation
+                            continue
+
                         # Calculate duration
                         duration = len(chunk_to_process) / (rate * channels * bytes_per_sample)
                         logger.info(
                             f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
-                            f"duration={duration:.2f}s"
+                            f"duration={duration:.2f}s, RMS={rms_val:.1f}"
                         )
 
                         # Base64-encode chunk and send to remote server
