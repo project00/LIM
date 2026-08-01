@@ -234,6 +234,14 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             }
 
     elif action == "load_3d_model":
+        if not x_sf_token:
+            return {
+                "type": "error",
+                "code": "MISSING_CREDENTIALS",
+                "action": action,
+                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una."
+            }
+
         data_obj = payload.get("data") or {}
         query = data_obj.get("query")
         if not query:
@@ -243,7 +251,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             )
 
         try:
-            model_metadata = search_and_fetch_3d_model(query, credentials)
+            model_metadata = search_and_fetch_3d_model(query, x_sf_token)
             return {
                 "type": "model_3d",
                 "source": "remote_index",
