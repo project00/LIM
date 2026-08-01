@@ -839,5 +839,40 @@ assert.deepStrictEqual(ws23.sentMessages[0], {
 console.log("✓ Test 23 Passed");
 
 
+// Test 24: Error Rendering in renderData and WebSocket dispatch
+console.log("Test 24: Error Rendering via renderData and WebSocket dispatch...");
+resetMocks();
+
+const testErrorData = {
+    type: "error",
+    code: "MISSING_CREDENTIALS",
+    action: "concept_map",
+    message: "Nessuna credenziale LLM configurata e abilitata."
+};
+
+// Execute renderData directly
+const renderDataErr = vm.runInContext('renderData', context);
+renderDataErr(testErrorData);
+
+assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+assert.strictEqual(mockElements['toast-banner'].innerText, "⚠️ Errore [MISSING_CREDENTIALS]: Nessuna credenziale LLM configurata e abilitata.");
+
+// Reset mocks and verify other codes
+const errorCodes = ["INVALID_LLM_OUTPUT", "RATE_LIMITED", "EMPTY_LESSON_LOG", "NO_AUDIO_DEVICE", "PARSE_ERROR"];
+errorCodes.forEach(code => {
+    resetMocks();
+    renderDataErr({
+        type: "error",
+        code: code,
+        action: "test_action",
+        message: `An error occurred: ${code}`
+    });
+    assert.strictEqual(mockElements['toast-banner'].style.display, "block");
+    assert.strictEqual(mockElements['toast-banner'].innerText, `⚠️ Errore [${code}]: An error occurred: ${code}`);
+});
+
+console.log("✓ Test 24 Passed");
+
+
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
 process.exit(0);

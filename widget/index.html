@@ -228,6 +228,17 @@
 
         function renderData(data) {
             if (!data) return;
+
+            if (data.type === "error") {
+                const toast = document.getElementById("toast-banner");
+                if (toast) {
+                    toast.innerText = `⚠️ Errore [${data.code || "UNKNOWN"}]: ${data.message || "Errore imprevisto"}`;
+                    toast.style.display = "block";
+                    setTimeout(() => { toast.style.display = "none"; }, 5000);
+                }
+                return;
+            }
+
             const out = document.getElementById("output");
             out.innerHTML = "";
 
