@@ -11,6 +11,7 @@ Design Note:
 """
 
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -46,6 +47,7 @@ class DaemonSettings(BaseModel):
     api_key: str = ""
     disable_local_backup: bool = False
     credentials: list[Credential] = []
+    remote_action_timeout_seconds: int = int(os.getenv("REMOTE_ACTION_TIMEOUT_SECONDS", "30"))
 
 
 def load_settings() -> DaemonSettings:
@@ -113,6 +115,7 @@ async def get_config() -> dict:
         "remote_base_url": settings.remote_base_url,
         "api_key_masked": masked,
         "disable_local_backup": settings.disable_local_backup,
+        "remote_action_timeout_seconds": settings.remote_action_timeout_seconds,
     }
 
 
@@ -121,6 +124,7 @@ class ConfigUpdate(BaseModel):
     remote_base_url: str
     api_key: str | None = None  # Empty/omitted value means do not touch the existing key
     disable_local_backup: bool | None = None
+    remote_action_timeout_seconds: int | None = None
 
 
 @router.post("/api/config")
@@ -140,6 +144,8 @@ async def update_config(update: ConfigUpdate) -> dict:
         settings.api_key = update.api_key
     if update.disable_local_backup is not None:
         settings.disable_local_backup = update.disable_local_backup
+    if update.remote_action_timeout_seconds is not None:
+        settings.remote_action_timeout_seconds = update.remote_action_timeout_seconds
     save_settings(settings)
     return {"status": "saved"}
 

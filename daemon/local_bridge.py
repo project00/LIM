@@ -528,7 +528,7 @@ class TranscriptionSession:
         import base64
         try:
             buffer = bytearray()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)) as http_client:
                 while self.is_running and self.stream:
                     # Read frames in a thread to avoid blocking the event loop
                     data = await asyncio.to_thread(
@@ -672,7 +672,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # Instantiate per-connection transcription session manager
     transcription_session = TranscriptionSession()
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)) as http_client:
         try:
             while True:
                 raw_data = await websocket.receive_text()
@@ -684,7 +684,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     try:
                         resp = await http_client.get(
                             f"{settings.remote_base_url}/health",
-                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {},
+                            timeout=2.5
                         )
                         if resp.status_code == 200:
                             await websocket.send_text(
