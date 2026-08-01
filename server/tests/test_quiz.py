@@ -175,10 +175,13 @@ def test_generate_quiz_success(mock_completion: MagicMock) -> None:
     mock_response.choices = [mock_choice]
     mock_completion.return_value = mock_response
 
-    quiz = generate_quiz("Test context about Python programming", 3)
+    quiz = generate_quiz("Test context about Python programming", 3, "gpt-4o", "test-key", None)
     assert len(quiz) == 3
     assert quiz[1]["question"] == "Q2"
     mock_completion.assert_called_once()
+    called_kwargs = mock_completion.call_args.kwargs
+    assert called_kwargs["model"] == "gpt-4o"
+    assert called_kwargs["api_key"] == "test-key"
 
 
 @patch("litellm.completion")
@@ -197,7 +200,10 @@ def test_api_generate_quiz_endpoint_success(mock_completion: MagicMock) -> None:
     mock_completion.return_value = mock_response
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o"
+    }
     payload = {
         "action": "generate_quiz",
         "data": {
@@ -230,7 +236,10 @@ def test_api_generate_quiz_validation_failure(mock_completion: MagicMock) -> Non
     mock_completion.return_value = mock_response
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o"
+    }
     payload = {
         "action": "generate_quiz",
         "data": {
@@ -261,7 +270,10 @@ def test_api_generate_quiz_provider_error(mock_completion: MagicMock) -> None:
     )
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o"
+    }
     payload = {
         "action": "generate_quiz",
         "data": {

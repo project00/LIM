@@ -19,17 +19,9 @@ def test_generate_summary_uses_passed_credentials(mock_completion: MagicMock):
     mock_completion.return_value = mock_response
 
     lesson_log = [{"type": "subtitle", "content": "Hello", "timestamp": "2026"}]
-    custom_credentials = {
-        "llm": {
-            "type": "llm_cloud",
-            "model": "gpt-custom-model",
-            "api_key": "my-custom-api-key",
-            "api_base": "https://custom.api.base"
-        }
-    }
 
-    # Call summary service with custom credentials
-    summary = generate_summary(lesson_log, credentials=custom_credentials)
+    # Call summary service with custom credentials passed as parameters
+    summary = generate_summary(lesson_log, "gpt-custom-model", "my-custom-api-key", "https://custom.api.base")
     assert summary == "Summary using custom creds"
 
     mock_completion.assert_called_once()
@@ -54,16 +46,8 @@ def test_generate_quiz_uses_passed_credentials(mock_completion: MagicMock):
     mock_response.choices = [mock_choice]
     mock_completion.return_value = mock_response
 
-    custom_credentials = {
-        "llm": {
-            "type": "llm_ollama",
-            "model": "ollama/llama-custom",
-            "api_key": "",
-            "api_base": "http://localhost:9999"
-        }
-    }
-
-    quiz = generate_quiz("lesson context", num_questions=3, credentials=custom_credentials)
+    # Call quiz service with custom credentials passed as parameters
+    quiz = generate_quiz("lesson context", num_questions=3, llm_model="ollama/llama-custom", llm_api_key=None, llm_api_base="http://localhost:9999")
     assert len(quiz) == 3
     assert quiz[0]["question"] == "Q1"
 
@@ -88,17 +72,15 @@ def test_api_concept_map_uses_passed_credentials(mock_completion: MagicMock):
         "data": {
             "topic": "cioccolato",
             "language": "it"
-        },
-        "credentials": {
-            "llm": {
-                "type": "llm_cloud",
-                "model": "gpt-4o-new",
-                "api_key": "api-key-test"
-            }
         }
     }
 
-    headers = {"Authorization": "Bearer test_secret_token"}
+    # Pass credentials via request headers
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-new",
+        "X-LLM-API-Key": "api-key-test"
+    }
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["type"] == "concept_map"

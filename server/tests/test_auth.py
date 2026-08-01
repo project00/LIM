@@ -85,7 +85,11 @@ def test_concept_map_generation_success(mock_completion: MagicMock) -> None:
             "language": "it"
         }
     }
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
 
@@ -177,7 +181,11 @@ def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> No
             "topic": "apparato circolatorio"
         }
     }
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
 
@@ -210,7 +218,11 @@ def test_concept_map_xss_integration_rejection(mock_completion: MagicMock) -> No
             "topic": "apparato circolatorio"
         }
     }
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
 
@@ -243,7 +255,11 @@ def test_concept_map_empty_integration_rejection(mock_completion: MagicMock) -> 
             "topic": "apparato circolatorio"
         }
     }
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
 
