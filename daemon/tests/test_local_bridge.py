@@ -50,8 +50,11 @@ def setup_active_credentials():
             access_token="test-sf-token"
         )
     ]
+    original_threshold = settings.silence_rms_threshold
+    settings.silence_rms_threshold = -1 # Disable silence detection by default for existing tests to prevent hangs
     yield
     settings.credentials = original_creds
+    settings.silence_rms_threshold = original_threshold
 
 
 def test_sympy_math_local_route() -> None:
@@ -394,6 +397,110 @@ async def test_start_transcription_double_start() -> None:
             await asyncio.sleep(0.05)
 
 
+import time
+
+@pytest.mark.asyncio
+async def test_transcription_silence_detection_skipped() -> None:
+    """
+    Tests that a synthetic silent audio chunk (all zeros) has an RMS of 0.0,
+    which is below the threshold (default 400), and is skipped (no HTTP request made to the server).
+    """
+    settings.silence_rms_threshold = 400
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+
+    # Use a safe simulated slow read to avoid event loop / CPU starvation
+    def slow_read_silence(*args, **kwargs):
+        time.sleep(0.01)
+        return b"\x00" * 2048
+    mock_stream.read.side_effect = slow_read_silence
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+
+        with client.websocket_connect("/ws") as websocket:
+            # Start transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Wait briefly to let background thread capture the chunks
+            await asyncio.sleep(0.1)
+
+            # Stop transcription cleanly
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Confirm that NO HTTP request was made to the server because the chunk was silent!
+        mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transcription_sound_detection_sent() -> None:
+    """
+    Tests that a synthetic sound audio chunk (alternating high amplitude) has a high RMS,
+    which is above the threshold (default 400), and is sent normally to the remote server.
+    """
+    settings.silence_rms_threshold = 400
+    client = TestClient(app)
+
+    # Generate synthetic noisy chunk with high amplitude alternating samples
+    import struct
+    noisy_buffer = struct.pack("<1024h", *([1000, -1000] * 512))
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+
+    # Use a safe simulated slow read
+    def slow_read_sound(*args, **kwargs):
+        time.sleep(0.01)
+        return noisy_buffer
+    mock_stream.read.side_effect = slow_read_sound
+
+    remote_data = {
+        "type": "transcription",
+        "source": "remote_stt",
+        "text": "Loud sound recognized",
+        "translated_text": None
+    }
+    dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+    mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+
+        mock_post.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            # Start transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Expect the redirected subtitle response sent over WebSocket
+            response = websocket.receive_json()
+
+            assert response["type"] == "subtitle"
+            assert response["text"] == "Loud sound recognized"
+
+            # Stop transcription cleanly
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+        # Confirm that HTTP request was indeed made to the server because the chunk was NOT silent!
+        mock_post.assert_called()
+
+
 @pytest.mark.asyncio
 async def test_transcribe_audio_slow_success_no_warning() -> None:
     """
@@ -401,13 +508,21 @@ async def test_transcribe_audio_slow_success_no_warning() -> None:
     (e.g., taking 4 seconds, which is over the old 2.5s timeout but under the 30s timeout)
     does not trigger a false system_warning and completes successfully.
     """
+    settings.silence_rms_threshold = 400
     client = TestClient(app)
+
+    import struct
+    noisy_buffer = struct.pack("<1024h", *([1000, -1000] * 512))
 
     mock_instance = MagicMock()
     mock_stream = MagicMock()
     mock_instance.open.return_value = mock_stream
-    # Yield one full chunk, then return empty bytes
-    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    # Use a safe simulated slow read
+    def slow_read_sound(*args, **kwargs):
+        time.sleep(0.01)
+        return noisy_buffer
+    mock_stream.read.side_effect = slow_read_sound
 
     # Mock post to delay and then return successful response
     async def slow_post(*args, **kwargs):

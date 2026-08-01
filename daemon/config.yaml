@@ -3,3 +3,4 @@ credentials: []
 disable_local_backup: false
 remote_action_timeout_seconds: 30
 remote_base_url: http://192.168.1.100:8000
+silence_rms_threshold: 400
