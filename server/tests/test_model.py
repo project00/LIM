@@ -88,8 +88,8 @@ def test_search_and_fetch_3d_model_cache_miss_success(mock_get: MagicMock) -> No
     # Assign side effects sequentially to mock_get
     mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
 
-    # Run the service
-    metadata = search_and_fetch_3d_model("H2O")
+    # Run the service with explicit sketchfab_token argument
+    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
     # Assert correct metadata returned
     assert metadata["uid"] == "model_uid_123"
@@ -140,8 +140,8 @@ def test_search_and_fetch_3d_model_cache_hit_skips_download(mock_get: MagicMock)
     }
     mock_get.return_value = mock_search_resp
 
-    # Run service
-    metadata = search_and_fetch_3d_model("H2O")
+    # Run service with explicit sketchfab_token argument
+    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
     # Assert metadata
     assert metadata["uid"] == "model_uid_123"
@@ -162,7 +162,7 @@ def test_search_no_results_raises_value_error(mock_get: MagicMock) -> None:
     mock_get.return_value = mock_resp
 
     with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
-        search_and_fetch_3d_model("impossible_search_query_123")
+        search_and_fetch_3d_model("impossible_search_query_123", "test-sketchfab-token")
 
 
 @patch("httpx.Client.get")
@@ -174,7 +174,7 @@ def test_search_api_failure_raises_runtime_error(mock_get: MagicMock) -> None:
     mock_get.return_value = mock_resp
 
     with pytest.raises(RuntimeError, match="Sketchfab Search API failure"):
-        search_and_fetch_3d_model("H2O")
+        search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
 
 # ------------------ API End-to-End Routing Tests ------------------
@@ -213,7 +213,10 @@ def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: Magi
     mock_sketchfab_get.return_value = mock_search_resp
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "test-sketchfab-token"
+    }
     payload = {
         "action": "load_3d_model",
         "data": {
@@ -232,6 +235,27 @@ def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: Magi
     assert data["attribution"]["author"] == "Creator display"
 
 
+def test_api_load_3d_model_missing_credentials() -> None:
+    """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error shape if X-Sketchfab-Token is absent."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test_secret_token"} # No X-Sketchfab-Token!
+    payload = {
+        "action": "load_3d_model",
+        "data": {
+            "query": "H2O"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "MISSING_CREDENTIALS"
+    assert data["action"] == "load_3d_model"
+    assert "Nessuna credenziale Sketchfab" in data["message"]
+
+
 @patch("httpx.Client.get")
 def test_api_load_3d_model_not_found(mock_sketchfab_get: MagicMock) -> None:
     """Tests POST /api/v1/analyze returns MODEL_NOT_FOUND error shape on search miss."""
@@ -243,7 +267,10 @@ def test_api_load_3d_model_not_found(mock_sketchfab_get: MagicMock) -> None:
     mock_sketchfab_get.return_value = mock_search_resp
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "test-sketchfab-token"
+    }
     payload = {
         "action": "load_3d_model",
         "data": {
@@ -267,7 +294,10 @@ def test_api_load_3d_model_remote_service_error(mock_sketchfab_get: MagicMock) -
     mock_sketchfab_get.side_effect = httpx.ConnectError("Connection timed out to Sketchfab")
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "test-sketchfab-token"
+    }
     payload = {
         "action": "load_3d_model",
         "data": {

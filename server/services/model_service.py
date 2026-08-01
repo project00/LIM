@@ -19,9 +19,6 @@ import httpx
 
 logger = logging.getLogger("server_model_service")
 
-# Sketchfab access token from environment (optional if provided per-request)
-SKETCHFAB_ACCESS_TOKEN = os.getenv("SKETCHFAB_ACCESS_TOKEN") or ""
-
 # Set up local cache path relative to this service or the server root
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model_cache"))
 
@@ -54,14 +51,14 @@ def is_cc_licensed(license_data: dict) -> bool:
     return False
 
 
-def search_and_fetch_3d_model(query: str, credentials: dict | None = None) -> dict:
+def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
     """
     Searches Sketchfab for query, filters for downloadable + CC models, downloads the ZIP,
     unzips to model_cache, and returns metadata details.
 
     Args:
         query: The search keyword (e.g. "molecola acqua H2O").
-        credentials: Optional dictionary containing client-side/daemon-side Sketchfab credentials.
+        sketchfab_token: The Sketchfab V3 API token to use.
 
     Returns:
         Dictionary containing metadata conforming to docs/api-contract.md §1 load_3d_model:
@@ -82,10 +79,7 @@ def search_and_fetch_3d_model(query: str, credentials: dict | None = None) -> di
     """
     logger.info("Searching Sketchfab for 3D model query: '%s'", query)
 
-    # Resolve Sketchfab credentials
-    sf_creds = (credentials or {}).get("sketchfab") or {}
-    access_token = sf_creds.get("access_token") or SKETCHFAB_ACCESS_TOKEN
-    if not access_token:
+    if not sketchfab_token:
         raise RuntimeError("Sketchfab access token is not configured. Request cannot be processed.")
 
     # 1. Search Sketchfab
@@ -99,7 +93,7 @@ def search_and_fetch_3d_model(query: str, credentials: dict | None = None) -> di
     try:
         # Use sync HTTP client following the requests-like model for ease of integration
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(search_url, params=params, headers=get_auth_headers(access_token))
+            response = client.get(search_url, params=params, headers=get_auth_headers(sketchfab_token))
 
             if response.status_code != 200:
                 logger.error("Sketchfab search failed: %d - %s", response.status_code, response.text)
@@ -154,7 +148,7 @@ def search_and_fetch_3d_model(query: str, credentials: dict | None = None) -> di
         download_endpoint = f"https://api.sketchfab.com/v3/models/{uid}/download"
         try:
             with httpx.Client(timeout=10.0) as client:
-                download_resp = client.get(download_endpoint, headers=get_auth_headers(access_token))
+                download_resp = client.get(download_endpoint, headers=get_auth_headers(sketchfab_token))
 
                 if download_resp.status_code != 200:
                     logger.error("Failed to request download for model %s: %d - %s", uid, download_resp.status_code, download_resp.text)
