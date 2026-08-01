@@ -116,3 +116,66 @@ def test_api_generate_summary_provider_error(mock_completion: MagicMock) -> None
     assert data["code"] == "INVALID_LLM_OUTPUT"
     assert data["action"] == "generate_summary"
     assert "Simulated connection timeout" in data["message"]
+
+
+@patch("litellm.completion")
+def test_generate_summary_ollama_config(mock_completion: MagicMock, monkeypatch) -> None:
+    """Tests that generate_summary works with an empty LLM_API_KEY and custom LLM_API_BASE (Ollama model)."""
+    import services.summary_service as summary_service
+
+    # Temporarily override LLM configuration
+    monkeypatch.setattr(summary_service, "LLM_MODEL", "ollama/llama3.1")
+    monkeypatch.setattr(summary_service, "LLM_API_KEY", "")
+    monkeypatch.setattr(summary_service, "LLM_API_BASE", "http://localhost:11434")
+
+    # Mock response
+    mock_choice = MagicMock()
+    mock_choice.message.content = "Ollama test summary"
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_completion.return_value = mock_response
+
+    lesson_log = [{"type": "subtitle", "content": "Ollama test lesson log.", "timestamp": "2026-07-23T10:00:00Z"}]
+
+    summary = generate_summary(lesson_log)
+
+    assert summary == "Ollama test summary"
+
+    # Verify litellm.completion was called with the correct parameters, and api_key was not passed
+    mock_completion.assert_called_once()
+    called_kwargs = mock_completion.call_args.kwargs
+    assert called_kwargs["model"] == "ollama/llama3.1"
+    assert "api_key" not in called_kwargs
+    assert called_kwargs["api_base"] == "http://localhost:11434"
+
+
+@patch("litellm.completion")
+def test_generate_summary_auth_error_fallback(mock_completion: MagicMock) -> None:
+    """Tests that generate_summary handles litellm AuthenticationError gracefully."""
+    import litellm
+    mock_completion.side_effect = litellm.exceptions.AuthenticationError(
+        message="Invalid API Key",
+        llm_provider="openai",
+        model="gpt-4o"
+    )
+
+    lesson_log = [{"type": "subtitle", "content": "Some content", "timestamp": "2026-07-23T10:00:00Z"}]
+    summary = generate_summary(lesson_log)
+
+    assert "Errore di autenticazione con il provider LLM" in summary
+
+
+@patch("litellm.completion")
+def test_generate_summary_connection_error_fallback(mock_completion: MagicMock) -> None:
+    """Tests that generate_summary handles litellm APIConnectionError gracefully."""
+    import litellm
+    mock_completion.side_effect = litellm.exceptions.APIConnectionError(
+        message="Ollama offline",
+        llm_provider="ollama",
+        model="ollama/llama3"
+    )
+
+    lesson_log = [{"type": "subtitle", "content": "Some content", "timestamp": "2026-07-23T10:00:00Z"}]
+    summary = generate_summary(lesson_log)
+
+    assert "Errore di connessione con il provider LLM" in summary

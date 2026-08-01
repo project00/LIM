@@ -466,7 +466,7 @@ class TranscriptionSession:
         import base64
         try:
             buffer = bytearray()
-            async with httpx.AsyncClient(timeout=2.5) as http_client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
                 while self.is_running and self.stream:
                     # Read frames in a thread to avoid blocking the event loop
                     data = await asyncio.to_thread(
@@ -606,7 +606,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # Instantiate per-connection transcription session manager
     transcription_session = TranscriptionSession()
 
-    async with httpx.AsyncClient(timeout=2.5) as http_client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
         try:
             while True:
                 raw_data = await websocket.receive_text()
