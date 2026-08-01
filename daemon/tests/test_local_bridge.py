@@ -395,6 +395,78 @@ async def test_start_transcription_double_start() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transcribe_audio_slow_success_no_warning() -> None:
+    """
+    Tests that a slow-but-eventually-successful transcribe_audio response
+    (e.g., taking 4 seconds, which is over the old 2.5s timeout but under the 30s timeout)
+    does not trigger a false system_warning and completes successfully.
+    """
+    client = TestClient(app)
+
+    mock_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_instance.open.return_value = mock_stream
+    # Yield one full chunk, then return empty bytes
+    mock_stream.read.side_effect = [b"\x00" * 32000, b""]
+
+    # Mock post to delay and then return successful response
+    async def slow_post(*args, **kwargs):
+        await asyncio.sleep(3.0) # Delay 3.0 seconds (over 2.5s)
+        remote_data = {
+            "type": "transcription",
+            "source": "remote_stt",
+            "text": "Slow but successful text",
+            "translated_text": None
+        }
+        dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
+        return httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
+
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new=slow_post):
+
+        with client.websocket_connect("/ws") as websocket:
+            # Send start_transcription
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
+
+            # Wait for response (timeout under 30s but will complete in 3.0s)
+            response = websocket.receive_json()
+
+            # Verify it is a subtitle, NOT a system_warning!
+            assert response["type"] == "subtitle"
+            assert response["text"] == "Slow but successful text"
+
+            # Stop transcription cleanly
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
+            await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_ping_remote_retains_short_timeout() -> None:
+    """Tests that ping_remote specifically overrides with a short timeout of 2.5s."""
+    client = TestClient(app)
+
+    # Mocking httpx.AsyncClient.get to verify keyword arguments
+    dummy_req = httpx.Request("GET", "http://192.168.1.100:8000/health")
+    mock_resp = httpx.Response(200, json={"status": "ok"}, request=dummy_req)
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_resp
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({"action": "ping_remote"}))
+            websocket.receive_json()
+
+        mock_get.assert_called_once()
+        called_kwargs = mock_get.call_args[1]
+        assert called_kwargs["timeout"] == 2.5
+
+
+@pytest.mark.asyncio
 async def test_transcription_disconnect_safety() -> None:
     """
     Tests that a WebSocketDisconnect or a Starlette RuntimeError disconnect
