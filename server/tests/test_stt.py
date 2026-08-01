@@ -207,7 +207,11 @@ def test_transcribe_audio_with_translation_success(mock_completion: MagicMock) -
     mock_completion.return_value = mock_response
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
     payload = {
         "action": "transcribe_audio",
         "data": {
@@ -300,6 +304,45 @@ def test_transcribe_audio_with_translation_error(mock_completion: MagicMock) -> 
     )
 
     client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
+    payload = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": audio_base64,
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le",
+            "target_language": "it"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "transcription"
+    assert data["text"] == "Hello world"
+    assert data["translated_text"] is None
+
+
+@patch("litellm.completion")
+def test_transcribe_audio_translation_graceful_degradation_missing_model(mock_completion: MagicMock) -> None:
+    """
+    Tests that if target_language is set but X-LLM-Model header is missing,
+    the request succeeds with translated_text set to None (graceful degradation).
+    """
+    raw_bytes = b"\x00" * 200
+    audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    mock_seg = MagicMock()
+    mock_seg.text = "Hello world"
+    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+
+    client = TestClient(app)
+    # X-LLM-Model is missing in headers!
     headers = {"Authorization": "Bearer test_secret_token"}
     payload = {
         "action": "transcribe_audio",
@@ -318,6 +361,9 @@ def test_transcribe_audio_with_translation_error(mock_completion: MagicMock) -> 
     assert data["type"] == "transcription"
     assert data["text"] == "Hello world"
     assert data["translated_text"] is None
+
+    # Verify LiteLLM completion was NOT called
+    mock_completion.assert_not_called()
 
 
 def test_import_fails_when_whisper_device_unset() -> None:

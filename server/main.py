@@ -183,25 +183,23 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
     action = payload.get("action")
     logger.info("Authenticated analyze request with payload action: %s", action)
 
-    # Extract credentials from payload if present
-    credentials = payload.get("credentials") or {}
-
-    # Check headers and build/extend credentials dict
+    # Extract X-LLM-Model / X-LLM-API-Key / X-LLM-API-Base / X-Sketchfab-Token from headers
     x_model = request.headers.get("X-LLM-Model") or request.headers.get("x-llm-model")
     x_key = request.headers.get("X-LLM-API-Key") or request.headers.get("x-llm-api-key")
     x_base = request.headers.get("X-LLM-API-Base") or request.headers.get("x-llm-api-base")
     x_sf_token = request.headers.get("X-Sketchfab-Token") or request.headers.get("x-sketchfab-token")
 
-    if x_model or x_key or x_base:
-        if "llm" not in credentials:
-            credentials["llm"] = {}
-        if x_model:
-            credentials["llm"]["model"] = x_model
-        if x_key:
-            credentials["llm"]["api_key"] = x_key
-        if x_base:
-            credentials["llm"]["api_base"] = x_base
+    # Missing credentials check for concept_map, generate_quiz, generate_summary
+    if action in ("concept_map", "generate_quiz", "generate_summary") and not x_model:
+        return {
+            "type": "error",
+            "code": "MISSING_CREDENTIALS",
+            "action": action,
+            "message": "Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una."
+        }
 
+    # Extract credentials from payload if present (keeping compatibility)
+    credentials = payload.get("credentials") or {}
     if x_sf_token:
         if "sketchfab" not in credentials:
             credentials["sketchfab"] = {}
@@ -218,8 +216,8 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
         language = data_obj.get("language", "it")
 
         try:
-            # Call the real concept map generator using LiteLLM
-            mermaid_code = generate_concept_map(topic, language, credentials)
+            # Call the real concept map generator using LiteLLM with explicit credentials
+            mermaid_code = generate_concept_map(topic, language, x_model, x_key, x_base)
 
             return {
                 "type": "concept_map",
@@ -284,7 +282,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 num_questions = 4
 
         try:
-            questions = generate_quiz(lesson_context, num_questions, credentials)
+            questions = generate_quiz(lesson_context, num_questions, x_model, x_key, x_base)
             return {
                 "type": "quiz",
                 "source": "remote_llm",
@@ -333,13 +331,16 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             target_language = data_obj.get("target_language")
             translated_text = None
             if target_language:
-                try:
-                    translated_text = translate_text(text, str(target_language), credentials)
-                except openai.OpenAIError as e:
-                    logger.error(
-                        f"Translation failed due to LLM provider error: {e}",
-                        exc_info=True
-                    )
+                if x_model:
+                    try:
+                        translated_text = translate_text(text, str(target_language), x_model, x_key, x_base)
+                    except openai.OpenAIError as e:
+                        logger.error(
+                            f"Translation failed due to LLM provider error: {e}",
+                            exc_info=True
+                        )
+                else:
+                    logger.info("Translation skipped: X-LLM-Model header is missing.")
 
             return {
                 "type": "transcription",
@@ -367,7 +368,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             }
 
         try:
-            summary_text = generate_summary(lesson_log, credentials)
+            summary_text = generate_summary(lesson_log, x_model, x_key, x_base)
             return {
                 "type": "summary",
                 "source": "remote_llm",

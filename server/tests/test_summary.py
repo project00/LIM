@@ -34,9 +34,13 @@ def test_generate_lesson_summary_success(mock_completion: MagicMock) -> None:
         {"type": "math", "content": "Espressione: f(x) = x^2", "timestamp": "2026-07-23T10:01:00.000Z"}
     ]
 
-    summary = generate_summary(lesson_log)
+    summary = generate_summary(lesson_log, "gpt-4o", "test-key", "https://api.base")
     assert summary == "Questo è il riassunto della lezione.\n\nContiene due paragrafi."
     mock_completion.assert_called_once()
+    called_kwargs = mock_completion.call_args.kwargs
+    assert called_kwargs["model"] == "gpt-4o"
+    assert called_kwargs["api_key"] == "test-key"
+    assert called_kwargs["api_base"] == "https://api.base"
 
 
 @patch("litellm.completion")
@@ -49,7 +53,12 @@ def test_api_generate_summary_endpoint_success(mock_completion: MagicMock) -> No
     mock_completion.return_value = mock_response
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o",
+        "X-LLM-API-Key": "test-key",
+        "X-LLM-API-Base": "https://api.base"
+    }
     payload = {
         "action": "generate_summary",
         "data": {
@@ -67,10 +76,35 @@ def test_api_generate_summary_endpoint_success(mock_completion: MagicMock) -> No
     assert data["summary"] == "Riassunto di prova della lezione."
 
 
+def test_api_generate_summary_missing_credentials() -> None:
+    """Tests that POST /api/v1/analyze returns MISSING_CREDENTIALS if X-LLM-Model is missing."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test_secret_token"} # X-LLM-Model missing!
+    payload = {
+        "action": "generate_summary",
+        "data": {
+            "lesson_log": [
+                {"type": "subtitle", "content": "Qualcosa", "timestamp": "2026-07-23T10:00:00Z"}
+            ]
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "MISSING_CREDENTIALS"
+    assert data["action"] == "generate_summary"
+    assert "Nessuna credenziale LLM" in data["message"]
+
+
 def test_api_generate_summary_empty_log() -> None:
     """Tests endpoint handles empty lesson log defensively, returning EMPTY_LESSON_LOG."""
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o"
+    }
     payload = {
         "action": "generate_summary",
         "data": {
@@ -99,7 +133,10 @@ def test_api_generate_summary_provider_error(mock_completion: MagicMock) -> None
     )
 
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"}
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o"
+    }
     payload = {
         "action": "generate_summary",
         "data": {
@@ -119,15 +156,8 @@ def test_api_generate_summary_provider_error(mock_completion: MagicMock) -> None
 
 
 @patch("litellm.completion")
-def test_generate_summary_ollama_config(mock_completion: MagicMock, monkeypatch) -> None:
+def test_generate_summary_ollama_config(mock_completion: MagicMock) -> None:
     """Tests that generate_summary works with an empty LLM_API_KEY and custom LLM_API_BASE (Ollama model)."""
-    import services.summary_service as summary_service
-
-    # Temporarily override LLM configuration
-    monkeypatch.setattr(summary_service, "LLM_MODEL", "ollama/llama3.1")
-    monkeypatch.setattr(summary_service, "LLM_API_KEY", "")
-    monkeypatch.setattr(summary_service, "LLM_API_BASE", "http://localhost:11434")
-
     # Mock response
     mock_choice = MagicMock()
     mock_choice.message.content = "Ollama test summary"
@@ -137,7 +167,7 @@ def test_generate_summary_ollama_config(mock_completion: MagicMock, monkeypatch)
 
     lesson_log = [{"type": "subtitle", "content": "Ollama test lesson log.", "timestamp": "2026-07-23T10:00:00Z"}]
 
-    summary = generate_summary(lesson_log)
+    summary = generate_summary(lesson_log, "ollama/llama3.1", None, "http://localhost:11434")
 
     assert summary == "Ollama test summary"
 
@@ -160,7 +190,7 @@ def test_generate_summary_auth_error_fallback(mock_completion: MagicMock) -> Non
     )
 
     lesson_log = [{"type": "subtitle", "content": "Some content", "timestamp": "2026-07-23T10:00:00Z"}]
-    summary = generate_summary(lesson_log)
+    summary = generate_summary(lesson_log, "gpt-4o", "invalid-key", None)
 
     assert "Errore di autenticazione con il provider LLM" in summary
 
@@ -176,6 +206,6 @@ def test_generate_summary_connection_error_fallback(mock_completion: MagicMock) 
     )
 
     lesson_log = [{"type": "subtitle", "content": "Some content", "timestamp": "2026-07-23T10:00:00Z"}]
-    summary = generate_summary(lesson_log)
+    summary = generate_summary(lesson_log, "ollama/llama3", None, "http://localhost:11434")
 
     assert "Errore di connessione con il provider LLM" in summary
