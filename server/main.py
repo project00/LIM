@@ -186,6 +186,27 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
     # Extract credentials from payload if present
     credentials = payload.get("credentials") or {}
 
+    # Check headers and build/extend credentials dict
+    x_model = request.headers.get("X-LLM-Model") or request.headers.get("x-llm-model")
+    x_key = request.headers.get("X-LLM-API-Key") or request.headers.get("x-llm-api-key")
+    x_base = request.headers.get("X-LLM-API-Base") or request.headers.get("x-llm-api-base")
+    x_sf_token = request.headers.get("X-Sketchfab-Token") or request.headers.get("x-sketchfab-token")
+
+    if x_model or x_key or x_base:
+        if "llm" not in credentials:
+            credentials["llm"] = {}
+        if x_model:
+            credentials["llm"]["model"] = x_model
+        if x_key:
+            credentials["llm"]["api_key"] = x_key
+        if x_base:
+            credentials["llm"]["api_base"] = x_base
+
+    if x_sf_token:
+        if "sketchfab" not in credentials:
+            credentials["sketchfab"] = {}
+        credentials["sketchfab"]["access_token"] = x_sf_token
+
     if action == "concept_map":
         data_obj = payload.get("data") or {}
         topic = data_obj.get("topic")

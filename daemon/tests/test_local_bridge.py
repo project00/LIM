@@ -28,6 +28,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from local_bridge import app
+from settings_api import settings, Credential
+
+@pytest.fixture(autouse=True)
+def setup_active_credentials():
+    original_creds = list(settings.credentials)
+    settings.credentials = [
+        Credential(
+            id="test-llm",
+            name="Test LLM",
+            type="llm_cloud",
+            enabled=True,
+            model="gpt-4o",
+            api_key="test-api-key"
+        ),
+        Credential(
+            id="test-sf",
+            name="Test Sketchfab",
+            type="sketchfab",
+            enabled=True,
+            access_token="test-sf-token"
+        )
+    ]
+    yield
+    settings.credentials = original_creds
 
 
 def test_sympy_math_local_route() -> None:

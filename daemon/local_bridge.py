@@ -174,6 +174,44 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
         logger.error(f"Failed to write to backup file {backup_path}: {e}")
 
 
+class MissingCredentialsError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+def get_outgoing_headers(action: str, payload_data: dict) -> dict:
+    headers = {}
+
+    # 1. LLM action check
+    is_llm_action = action in ("concept_map", "generate_quiz", "generate_summary")
+    is_translation_stt = action == "transcribe_audio" and bool(payload_data.get("target_language"))
+
+    if is_llm_action or is_translation_stt:
+        active_llm = next((c for c in settings.credentials if c.enabled and c.type in ("llm_cloud", "llm_ollama")), None)
+        if active_llm:
+            if active_llm.model:
+                headers["X-LLM-Model"] = active_llm.model
+            if active_llm.type == "llm_cloud" and active_llm.api_key:
+                headers["X-LLM-API-Key"] = active_llm.api_key
+            if active_llm.api_base:
+                headers["X-LLM-API-Base"] = active_llm.api_base
+        else:
+            if is_llm_action:
+                raise MissingCredentialsError("Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una.")
+
+    # 2. Sketchfab action check
+    if action == "load_3d_model":
+        active_sf = next((c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None)
+        if active_sf:
+            if active_sf.access_token:
+                headers["X-Sketchfab-Token"] = active_sf.access_token
+        else:
+            raise MissingCredentialsError("Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.")
+
+    return headers
+
+
 def attach_active_credentials(payload: dict) -> None:
     """Helper to attach active LLM and Sketchfab credentials from settings into the request payload."""
     active_llm = next((c for c in settings.credentials if c.enabled and c.type in ("llm_cloud", "llm_ollama")), None)
@@ -222,7 +260,7 @@ class ModelRouter:
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "model_cache"))
 
 
-async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, payload: dict) -> dict:
+async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, payload: dict, custom_headers: dict | None = None) -> dict:
     """
     Handles loading a 3D model with local caching on the daemon.
     Checks the local cache first by hashing the query. If a hit occurs, serves it immediately.
@@ -256,6 +294,8 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
 
     remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
     headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+    if custom_headers:
+        headers.update(custom_headers)
 
     response = await http_client.post(remote_analyze_url, json=payload, headers=headers)
     response.raise_for_status()
@@ -530,6 +570,9 @@ class TranscriptionSession:
                             headers["Authorization"] = f"Bearer {settings.api_key}"
 
                         try:
+                            llm_headers = get_outgoing_headers("transcribe_audio", payload["data"])
+                            headers.update(llm_headers)
+
                             remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
                             response = await http_client.post(
                                 remote_analyze_url,
@@ -707,19 +750,36 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif target == RouteTarget.REMOTE:
                     attach_active_credentials(payload)
                     try:
+                        # Extract the data object safely and resolve custom headers
+                        payload_data = payload.get("data") or {}
+                        custom_headers = get_outgoing_headers(action, payload_data)
+                    except MissingCredentialsError as e:
+                        err_res = {
+                            "type": "error",
+                            "code": "MISSING_CREDENTIALS",
+                            "action": action,
+                            "message": e.message
+                        }
+                        await websocket.send_text(json.dumps(err_res))
+                        continue
+
+                    try:
                         if action == "load_3d_model":
                             query = payload.get("data", {}).get("query")
                             if query:
-                                res_metadata = await handle_load_3d_model(query, http_client, payload)
+                                res_metadata = await handle_load_3d_model(query, http_client, payload, custom_headers)
                                 await send_and_backup(websocket, res_metadata, backup_path)
                                 continue
 
                         # Construct remote analyze URL dynamically
                         remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                        req_headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+                        req_headers.update(custom_headers)
+
                         response = await http_client.post(
                             remote_analyze_url,
                             json=payload,
-                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+                            headers=req_headers
                         )
                         response.raise_for_status()
                         await send_and_backup(websocket, response.text, backup_path)
