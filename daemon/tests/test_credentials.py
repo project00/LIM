@@ -131,3 +131,118 @@ def test_credential_deletion():
     # Verify gone
     creds = client.get("/api/credentials").json()
     assert len(creds) == 0
+
+
+import json
+
+def test_get_outgoing_headers_llm_cloud():
+    from local_bridge import get_outgoing_headers
+    settings.credentials = [
+        Credential(
+            id="llm1",
+            name="Cloud 1",
+            type="llm_cloud",
+            enabled=True,
+            model="gpt-4o",
+            api_key="key-abc-123",
+            api_base="https://custom.com"
+        )
+    ]
+
+    # concept_map needs LLM
+    headers = get_outgoing_headers("concept_map", {})
+    assert headers["X-LLM-Model"] == "gpt-4o"
+    assert headers["X-LLM-API-Key"] == "key-abc-123"
+    assert headers["X-LLM-API-Base"] == "https://custom.com"
+
+
+def test_get_outgoing_headers_llm_ollama():
+    from local_bridge import get_outgoing_headers
+    settings.credentials = [
+        Credential(
+            id="llm2",
+            name="Ollama 1",
+            type="llm_ollama",
+            enabled=True,
+            model="ollama/mistral",
+            api_base="http://localhost:11434"
+        )
+    ]
+
+    # generate_quiz needs LLM
+    headers = get_outgoing_headers("generate_quiz", {})
+    assert headers["X-LLM-Model"] == "ollama/mistral"
+    assert headers["X-LLM-API-Base"] == "http://localhost:11434"
+    assert "X-LLM-API-Key" not in headers # Ollama should omit the key header entirely
+
+
+def test_get_outgoing_headers_missing_llm_throws():
+    from local_bridge import get_outgoing_headers, MissingCredentialsError
+    settings.credentials = [] # no credentials
+
+    with pytest.raises(MissingCredentialsError) as exc_info:
+        get_outgoing_headers("concept_map", {})
+    assert "Nessuna credenziale LLM" in str(exc_info.value)
+
+
+def test_get_outgoing_headers_transcribe_audio_translation_optional():
+    from local_bridge import get_outgoing_headers, MissingCredentialsError
+    settings.credentials = []
+
+    # transcribe_audio with target_language does NOT throw if no LLM credential, just returns empty headers
+    headers = get_outgoing_headers("transcribe_audio", {"target_language": "en"})
+    assert len(headers) == 0
+
+    # transcribe_audio with target_language and active LLM gets headers
+    settings.credentials = [
+        Credential(
+            id="llm1",
+            name="Cloud 1",
+            type="llm_cloud",
+            enabled=True,
+            model="gpt-4o",
+            api_key="key-abc-123"
+        )
+    ]
+    headers = get_outgoing_headers("transcribe_audio", {"target_language": "en"})
+    assert headers["X-LLM-Model"] == "gpt-4o"
+    assert headers["X-LLM-API-Key"] == "key-abc-123"
+
+
+def test_get_outgoing_headers_sketchfab():
+    from local_bridge import get_outgoing_headers, MissingCredentialsError
+    settings.credentials = []
+
+    # load_3d_model throws if no Sketchfab credential is enabled
+    with pytest.raises(MissingCredentialsError) as exc_info:
+        get_outgoing_headers("load_3d_model", {})
+    assert "Nessuna credenziale Sketchfab" in str(exc_info.value)
+
+    # Enable Sketchfab
+    settings.credentials = [
+        Credential(
+            id="sf1",
+            name="Sketch 1",
+            type="sketchfab",
+            enabled=True,
+            access_token="sf-token-12345"
+        )
+    ]
+    headers = get_outgoing_headers("load_3d_model", {})
+    assert headers["X-Sketchfab-Token"] == "sf-token-12345"
+
+
+def test_websocket_instant_missing_credentials_failure():
+    from local_bridge import app as lb_app
+    settings.credentials = [] # no credentials
+    client_lb = TestClient(lb_app)
+
+    with client_lb.websocket_connect("/ws") as websocket:
+        websocket.send_text(json.dumps({
+            "action": "concept_map",
+            "data": {"topic": "cioccolato"}
+        }))
+        response = websocket.receive_json()
+        assert response["type"] == "error"
+        assert response["code"] == "MISSING_CREDENTIALS"
+        assert "Nessuna credenziale LLM" in response["message"]
