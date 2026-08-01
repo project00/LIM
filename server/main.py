@@ -12,6 +12,7 @@ Design Note:
 
 import logging
 import os
+import contextvars
 from typing import Any, Dict
 from fastapi import FastAPI, Depends, Header, HTTPException, status, Request
 from fastapi.responses import JSONResponse
@@ -44,17 +45,47 @@ from services.model_service import search_and_fetch_3d_model  # noqa: E402
 from services.summary_service import generate_summary  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+current_request = contextvars.ContextVar("current_request", default=None)
+
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
     description="Mock remote server for development verification and API routing with authentication",
     version="1.0.0"
 )
 
+
+@app.middleware("http")
+async def body_parser_middleware(request: Request, call_next):
+    action = None
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            action = body.get("action")
+        except Exception:
+            pass
+    request.state.action = action
+
+    token = current_request.set(request)
+    try:
+        response = await call_next(request)
+    finally:
+        current_request.reset(token)
+    return response
+
+
 def get_rate_limit(*args, **kwargs) -> str:
     """
-    Returns the rate limit dynamically from the environment variable.
+    Returns the rate limit dynamically, being action-aware.
+    transcribe_audio receives a higher rate limit (default 90).
     """
-    limit_val = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+    req = current_request.get()
+    action = getattr(req.state, "action", None) if req else None
+
+    if action == "transcribe_audio":
+        limit_val = int(os.getenv("RATE_LIMIT_TRANSCRIBE_PER_MINUTE", "90"))
+    else:
+        limit_val = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+
     return f"{limit_val}/minute"
 
 

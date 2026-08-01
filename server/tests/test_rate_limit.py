@@ -12,6 +12,7 @@ Design Note:
 import os
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # Configure environment variables before importing app/services
 os.environ["API_KEY"] = "test_secret_token"
@@ -138,3 +139,67 @@ def test_health_not_rate_limited(monkeypatch) -> None:
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+@patch("litellm.completion")
+@patch("main.transcribe_audio")
+def test_action_aware_rate_limiting(mock_stt: MagicMock, mock_completion: MagicMock, monkeypatch) -> None:
+    """
+    Tests that transcribe_audio receives a higher rate limit than other actions.
+    If RATE_LIMIT_PER_MINUTE is 2 and RATE_LIMIT_TRANSCRIBE_PER_MINUTE is 4:
+    - concept_map should be limited on the 3rd request.
+    - transcribe_audio should still be allowed on the 3rd and 4th requests, and limited only on the 5th.
+    """
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("RATE_LIMIT_TRANSCRIBE_PER_MINUTE", "4")
+    limiter.reset()
+
+    # Configure mock completion and stt responses
+    mock_stt.return_value = "Hello"
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = "graph TD\n  A --> B"
+    mock_resp = MagicMock()
+    mock_resp.choices = [mock_choice]
+    mock_completion.return_value = mock_resp
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini"
+    }
+
+    # --- Test concept_map limit of 2 ---
+    payload_map = {"action": "concept_map", "data": {"topic": "biology"}}
+
+    # Request 1 & 2: Allowed
+    assert client.post("/api/v1/analyze", json=payload_map, headers=headers).status_code == 200
+    assert client.post("/api/v1/analyze", json=payload_map, headers=headers).status_code == 200
+    # Request 3: Limited!
+    resp_map3 = client.post("/api/v1/analyze", json=payload_map, headers=headers)
+    assert resp_map3.status_code == 200
+    assert resp_map3.json().get("code") == "RATE_LIMITED"
+
+    # Reset limiter for transcribe_audio tests
+    limiter.reset()
+
+    # --- Test transcribe_audio limit of 4 ---
+    payload_audio = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": "AAAA",
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le"
+        }
+    }
+
+    # Request 1, 2, 3, & 4: Allowed (transcribe_audio has higher limit 4)
+    for _ in range(4):
+        resp = client.post("/api/v1/analyze", json=payload_audio, headers=headers)
+        assert resp.status_code == 200
+        assert resp.json().get("type") != "error"
+
+    # Request 5: Limited!
+    resp_audio5 = client.post("/api/v1/analyze", json=payload_audio, headers=headers)
+    assert resp_audio5.status_code == 200
+    assert resp_audio5.json().get("code") == "RATE_LIMITED"
