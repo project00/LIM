@@ -37,18 +37,37 @@ if LLM_API_BASE:
         LLM_API_BASE = None
 
 
-def generate_concept_map(topic: str, language: str) -> str:
+def generate_concept_map(topic: str, language: str, credentials: dict | None = None) -> str:
     """
     Generates Mermaid graph flowchart syntax for a concept map on topic in the given language.
 
     Args:
         topic: The topic of the concept map.
         language: The target language (e.g. "it").
+        credentials: Optional dictionary containing client-side/daemon-side LLM credentials.
 
     Returns:
         The raw Mermaid graph syntax string, cleaned and fully validated.
     """
     logger.info("Generating concept map for topic: '%s' in language: '%s'", topic, language)
+
+    # Resolve credentials
+    llm_creds = (credentials or {}).get("llm") or {}
+    model = llm_creds.get("model") or LLM_MODEL
+    api_key = llm_creds.get("api_key") if "api_key" in llm_creds else LLM_API_KEY
+    api_base = llm_creds.get("api_base") if "api_base" in llm_creds else LLM_API_BASE
+
+    if api_key:
+        api_key = api_key.strip()
+        if api_key.startswith("replace_") or "placeholder" in api_key.lower() or api_key == "your_llm_provider_api_key_here":
+            api_key = ""
+    else:
+        api_key = ""
+
+    if api_base:
+        api_base = api_base.strip()
+        if not api_base or "placeholder" in api_base.lower():
+            api_base = None
 
     prompt = (
         f"Generate a concept map using only valid Mermaid graph/flowchart syntax on the topic: '{topic}' "
@@ -59,13 +78,13 @@ def generate_concept_map(topic: str, language: str) -> str:
 
     # Call LiteLLM completion with only configured parameters
     completion_args = {
-        "model": LLM_MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}]
     }
-    if LLM_API_KEY:
-        completion_args["api_key"] = LLM_API_KEY
-    if LLM_API_BASE:
-        completion_args["api_base"] = LLM_API_BASE
+    if api_key:
+        completion_args["api_key"] = api_key
+    if api_base:
+        completion_args["api_base"] = api_base
 
     response = litellm.completion(**completion_args)
 

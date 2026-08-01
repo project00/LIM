@@ -19,18 +19,16 @@ import httpx
 
 logger = logging.getLogger("server_model_service")
 
-# Fail fast at startup if the required Sketchfab access token is missing
-SKETCHFAB_ACCESS_TOKEN = os.getenv("SKETCHFAB_ACCESS_TOKEN")
-if not SKETCHFAB_ACCESS_TOKEN:
-    raise RuntimeError("SKETCHFAB_ACCESS_TOKEN environment variable is not configured. Server startup aborted.")
+# Sketchfab access token from environment (optional if provided per-request)
+SKETCHFAB_ACCESS_TOKEN = os.getenv("SKETCHFAB_ACCESS_TOKEN") or ""
 
 # Set up local cache path relative to this service or the server root
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model_cache"))
 
 
-def get_auth_headers() -> dict:
+def get_auth_headers(access_token: str) -> dict:
     """Helper to return authenticated authorization headers for Sketchfab API."""
-    token = SKETCHFAB_ACCESS_TOKEN.strip()
+    token = access_token.strip()
     if token.startswith("Token ") or token.startswith("Bearer "):
         return {"Authorization": token}
     # Default to Token authorization format
@@ -56,13 +54,14 @@ def is_cc_licensed(license_data: dict) -> bool:
     return False
 
 
-def search_and_fetch_3d_model(query: str) -> dict:
+def search_and_fetch_3d_model(query: str, credentials: dict | None = None) -> dict:
     """
     Searches Sketchfab for query, filters for downloadable + CC models, downloads the ZIP,
     unzips to model_cache, and returns metadata details.
 
     Args:
         query: The search keyword (e.g. "molecola acqua H2O").
+        credentials: Optional dictionary containing client-side/daemon-side Sketchfab credentials.
 
     Returns:
         Dictionary containing metadata conforming to docs/api-contract.md §1 load_3d_model:
@@ -83,6 +82,12 @@ def search_and_fetch_3d_model(query: str) -> dict:
     """
     logger.info("Searching Sketchfab for 3D model query: '%s'", query)
 
+    # Resolve Sketchfab credentials
+    sf_creds = (credentials or {}).get("sketchfab") or {}
+    access_token = sf_creds.get("access_token") or SKETCHFAB_ACCESS_TOKEN
+    if not access_token:
+        raise RuntimeError("Sketchfab access token is not configured. Request cannot be processed.")
+
     # 1. Search Sketchfab
     search_url = "https://api.sketchfab.com/v3/models"
     params = {
@@ -94,7 +99,7 @@ def search_and_fetch_3d_model(query: str) -> dict:
     try:
         # Use sync HTTP client following the requests-like model for ease of integration
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(search_url, params=params, headers=get_auth_headers())
+            response = client.get(search_url, params=params, headers=get_auth_headers(access_token))
 
             if response.status_code != 200:
                 logger.error("Sketchfab search failed: %d - %s", response.status_code, response.text)
@@ -149,7 +154,7 @@ def search_and_fetch_3d_model(query: str) -> dict:
         download_endpoint = f"https://api.sketchfab.com/v3/models/{uid}/download"
         try:
             with httpx.Client(timeout=10.0) as client:
-                download_resp = client.get(download_endpoint, headers=get_auth_headers())
+                download_resp = client.get(download_endpoint, headers=get_auth_headers(access_token))
 
                 if download_resp.status_code != 200:
                     logger.error("Failed to request download for model %s: %d - %s", uid, download_resp.status_code, download_resp.text)

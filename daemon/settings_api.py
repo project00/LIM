@@ -12,7 +12,9 @@ Design Note:
 
 import logging
 import time
+import uuid
 from pathlib import Path
+from typing import Literal
 import httpx
 import yaml
 from fastapi import APIRouter
@@ -26,11 +28,24 @@ router = APIRouter()
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
+class Credential(BaseModel):
+    """Pydantic model representing LLM or Sketchfab provider credentials."""
+    id: str
+    name: str
+    type: Literal["llm_cloud", "llm_ollama", "sketchfab"]
+    enabled: bool = False
+    model: str | None = None
+    api_key: str | None = None
+    api_base: str | None = None
+    access_token: str | None = None
+
+
 class DaemonSettings(BaseModel):
     """Pydantic model representing local daemon configuration settings."""
     remote_base_url: str = "http://192.168.1.100:8000"
     api_key: str = ""
     disable_local_backup: bool = False
+    credentials: list[Credential] = []
 
 
 def load_settings() -> DaemonSettings:
@@ -162,3 +177,98 @@ async def test_connection() -> dict:
             "latency_ms": None,
             "message": "Server remoto non raggiungibile",
         }
+
+
+def mask_key(val: str | None) -> str:
+    if not val:
+        return ""
+    return f"••••••{val[-4:]}" if len(val) >= 4 else "••••••"
+
+
+def enforce_mutual_exclusivity(active_cred: Credential) -> None:
+    if active_cred.type in ("llm_cloud", "llm_ollama"):
+        for c in settings.credentials:
+            if c.id != active_cred.id and c.type in ("llm_cloud", "llm_ollama"):
+                c.enabled = False
+    elif active_cred.type == "sketchfab":
+        for c in settings.credentials:
+            if c.id != active_cred.id and c.type == "sketchfab":
+                c.enabled = False
+
+
+class CredentialCreate(BaseModel):
+    name: str
+    type: Literal["llm_cloud", "llm_ollama", "sketchfab"]
+    enabled: bool = False
+    model: str | None = None
+    api_key: str | None = None
+    api_base: str | None = None
+    access_token: str | None = None
+
+
+class CredentialToggle(BaseModel):
+    enabled: bool
+
+
+@router.get("/api/credentials")
+async def list_credentials() -> list[dict]:
+    logger.info("Listing credentials.")
+    result = []
+    for cred in settings.credentials:
+        result.append({
+            "id": cred.id,
+            "name": cred.name,
+            "type": cred.type,
+            "enabled": cred.enabled,
+            "model": cred.model,
+            "api_key_masked": mask_key(cred.api_key),
+            "api_base": cred.api_base,
+            "access_token_masked": mask_key(cred.access_token)
+        })
+    return result
+
+
+@router.post("/api/credentials")
+async def add_credential(payload: CredentialCreate) -> dict:
+    logger.info("Creating a new credential.")
+    new_id = str(uuid.uuid4())
+    cred = Credential(
+        id=new_id,
+        name=payload.name,
+        type=payload.type,
+        enabled=payload.enabled,
+        model=payload.model,
+        api_key=payload.api_key,
+        api_base=payload.api_base,
+        access_token=payload.access_token
+    )
+    if cred.enabled:
+        enforce_mutual_exclusivity(cred)
+    settings.credentials.append(cred)
+    save_settings(settings)
+    return {"status": "created", "id": new_id}
+
+
+@router.patch("/api/credentials/{id}")
+async def toggle_credential(id: str, payload: CredentialToggle) -> dict:
+    logger.info("Patching credential %s.", id)
+    target = None
+    for c in settings.credentials:
+        if c.id == id:
+            target = c
+            break
+    if not target:
+        return {"status": "error", "message": "Credential not found"}
+    target.enabled = payload.enabled
+    if target.enabled:
+        enforce_mutual_exclusivity(target)
+    save_settings(settings)
+    return {"status": "updated"}
+
+
+@router.delete("/api/credentials/{id}")
+async def delete_credential(id: str) -> dict:
+    logger.info("Deleting credential %s.", id)
+    settings.credentials = [c for c in settings.credentials if c.id != id]
+    save_settings(settings)
+    return {"status": "deleted"}
