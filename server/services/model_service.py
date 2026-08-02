@@ -48,12 +48,9 @@ def extract_significant_words(query: str) -> list[str]:
 
     significant = [w for w in words if w not in stopwords and len(w) >= 2]
 
-    # If filtering removed all words, fallback to using all non-stop words
+    # If filtering removed all words, fallback to using all non-stop words (which doesn't include stopwords)
     if not significant:
         significant = [w for w in words if w not in stopwords]
-    # If still empty, fallback to the entire word list
-    if not significant:
-        significant = words
 
     return significant
 
