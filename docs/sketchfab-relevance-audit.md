@@ -25,12 +25,9 @@ def extract_significant_words(query: str) -> list[str]:
 
     significant = [w for w in words if w not in stopwords and len(w) >= 2]
 
-    # If filtering removed all words, fallback to using all non-stop words
+    # If filtering removed all words, fallback to using all non-stop words (which doesn't include stopwords)
     if not significant:
         significant = [w for w in words if w not in stopwords]
-    # If still empty, fallback to the entire word list
-    if not significant:
-        significant = words
 
     return significant
 ```
@@ -64,7 +61,7 @@ Within `search_and_fetch_3d_model`, the loop checks names against significant wo
 ```
 
 ### Analysis of Empty Significant Words Check
-If the `significant_words` list is empty (e.g., if the user searches for empty spaces, punctuation, or nothing remains), `any(word in model_name for word in [])` evaluates to `False`. Thus, the loop correctly rejects everything instead of accidentally passing everything.
+If the `significant_words` list is empty (e.g., if the user searches for empty spaces, punctuation, or exclusively stopwords), `any(word in model_name for word in [])` evaluates to `False`. Thus, the loop correctly rejects everything instead of accidentally passing everything.
 
 ---
 
@@ -229,5 +226,38 @@ def test_api_load_3d_model_not_found(mock_sketchfab_get: MagicMock) -> None:
     assert data["code"] == "MODEL_NOT_FOUND"
     assert data["action"] == "load_3d_model"
     assert "Nessun modello 3D trovato" in data["message"]
+```
+
+And finally, the unit test verifying that queries consisting entirely of stopwords (like "la il") correctly raise a `ValueError` (and do not match spuriously):
+
+```python
+@patch("httpx.Client.get")
+def test_search_all_stopwords_query_raises_error(mock_get: MagicMock) -> None:
+    """Tests that a query composed entirely of stopwords (like "la il") returns MODEL_NOT_FOUND (ValueError) and doesn't match spuriously."""
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "villa_uid_999",
+                "name": "Luxury Modern Villa with Pool",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
+                "user": {
+                    "username": "architect",
+                    "displayName": "Architect Pro"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            }
+        ]
+    }
+    mock_get.return_value = mock_search_resp
+
+    # "la il" are both in the stopwords set. Should return MODEL_NOT_FOUND (ValueError)
+    with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
+        search_and_fetch_3d_model("la il", "test-sketchfab-token")
 ```
 This preserves the exact contract `/api/v1/analyze` status code 200 error response payload shape.

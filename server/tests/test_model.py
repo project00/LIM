@@ -414,3 +414,33 @@ def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
 
     with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
         search_and_fetch_3d_model("H2O", "test-sketchfab-token")
+
+
+@patch("httpx.Client.get")
+def test_search_all_stopwords_query_raises_error(mock_get: MagicMock) -> None:
+    """Tests that a query composed entirely of stopwords (like "la il") returns MODEL_NOT_FOUND (ValueError) and doesn't match spuriously."""
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "villa_uid_999",
+                "name": "Luxury Modern Villa with Pool",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
+                "user": {
+                    "username": "architect",
+                    "displayName": "Architect Pro"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            }
+        ]
+    }
+    mock_get.return_value = mock_search_resp
+
+    # "la il" are both in the stopwords set. Should return MODEL_NOT_FOUND (ValueError)
+    with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
+        search_and_fetch_3d_model("la il", "test-sketchfab-token")
