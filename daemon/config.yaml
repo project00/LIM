@@ -1,5 +1,32 @@
 api_key: ''
-credentials: []
+credentials:
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: fd29dbd7-76e4-4621-ab9b-654bbcb5073c
+  model: qwen
+  name: Concept Map Qwen
+  scope: concept_map
+  type: llm_cloud
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: false
+  id: 27094d82-458a-48c4-861a-03372d26325b
+  model: gemma
+  name: Translate Gemma
+  scope: translation
+  type: llm_ollama
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: a6adae1c-bf6b-4add-b94c-203123540302
+  model: deepseek
+  name: Translate DeepSeek
+  scope: translation
+  type: llm_cloud
 disable_local_backup: false
 remote_action_timeout_seconds: 30
 remote_base_url: http://192.168.1.100:8000

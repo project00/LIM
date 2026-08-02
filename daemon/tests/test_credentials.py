@@ -1,16 +1,17 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-import uuid
 from fastapi.testclient import TestClient
-from settings_api import router, settings, DaemonSettings, Credential, save_settings
+from settings_api import router, settings, Credential
 from fastapi import FastAPI
 
 app = FastAPI()
 app.include_router(router)
 client = TestClient(app)
+
 
 @pytest.fixture(autouse=True)
 def clean_settings(monkeypatch):
@@ -34,7 +35,7 @@ def test_credential_creation_and_listing():
         "enabled": True,
         "model": "gpt-4o",
         "api_key": "my-secret-key-12345",
-        "api_base": "https://api.custom.com"
+        "api_base": "https://api.custom.com",
     }
     resp = client.post("/api/credentials", json=payload)
     assert resp.status_code == 200
@@ -61,7 +62,7 @@ def test_credential_mutual_exclusivity():
         "type": "llm_cloud",
         "enabled": False,
         "model": "gpt-4o",
-        "api_key": "secret-cloud-key"
+        "api_key": "secret-cloud-key",
     }
     r1 = client.post("/api/credentials", json=c1)
     id1 = r1.json()["id"]
@@ -72,7 +73,7 @@ def test_credential_mutual_exclusivity():
         "type": "llm_ollama",
         "enabled": False,
         "model": "llama3",
-        "api_base": "http://localhost:11434"
+        "api_base": "http://localhost:11434",
     }
     r2 = client.post("/api/credentials", json=c2)
     id2 = r2.json()["id"]
@@ -82,7 +83,7 @@ def test_credential_mutual_exclusivity():
         "name": "Sketchfab 1",
         "type": "sketchfab",
         "enabled": False,
-        "access_token": "sf-token-1"
+        "access_token": "sf-token-1",
     }
     r3 = client.post("/api/credentials", json=c3)
     id3 = r3.json()["id"]
@@ -118,7 +119,7 @@ def test_credential_deletion():
     payload = {
         "name": "Test Sketchfab",
         "type": "sketchfab",
-        "access_token": "token-1234"
+        "access_token": "token-1234",
     }
     r = client.post("/api/credentials", json=payload)
     cred_id = r.json()["id"]
@@ -135,8 +136,10 @@ def test_credential_deletion():
 
 import json
 
+
 def test_get_outgoing_headers_llm_cloud():
     from local_bridge import get_outgoing_headers
+
     settings.credentials = [
         Credential(
             id="llm1",
@@ -145,7 +148,7 @@ def test_get_outgoing_headers_llm_cloud():
             enabled=True,
             model="gpt-4o",
             api_key="key-abc-123",
-            api_base="https://custom.com"
+            api_base="https://custom.com",
         )
     ]
 
@@ -158,6 +161,7 @@ def test_get_outgoing_headers_llm_cloud():
 
 def test_get_outgoing_headers_llm_ollama():
     from local_bridge import get_outgoing_headers
+
     settings.credentials = [
         Credential(
             id="llm2",
@@ -165,7 +169,7 @@ def test_get_outgoing_headers_llm_ollama():
             type="llm_ollama",
             enabled=True,
             model="ollama/mistral",
-            api_base="http://localhost:11434"
+            api_base="http://localhost:11434",
         )
     ]
 
@@ -173,12 +177,13 @@ def test_get_outgoing_headers_llm_ollama():
     headers = get_outgoing_headers("generate_quiz", {})
     assert headers["X-LLM-Model"] == "ollama/mistral"
     assert headers["X-LLM-API-Base"] == "http://localhost:11434"
-    assert "X-LLM-API-Key" not in headers # Ollama should omit the key header entirely
+    assert "X-LLM-API-Key" not in headers  # Ollama should omit the key header entirely
 
 
 def test_get_outgoing_headers_missing_llm_throws():
     from local_bridge import get_outgoing_headers, MissingCredentialsError
-    settings.credentials = [] # no credentials
+
+    settings.credentials = []  # no credentials
 
     with pytest.raises(MissingCredentialsError) as exc_info:
         get_outgoing_headers("concept_map", {})
@@ -186,7 +191,8 @@ def test_get_outgoing_headers_missing_llm_throws():
 
 
 def test_get_outgoing_headers_transcribe_audio_translation_optional():
-    from local_bridge import get_outgoing_headers, MissingCredentialsError
+    from local_bridge import get_outgoing_headers
+
     settings.credentials = []
 
     # transcribe_audio with target_language does NOT throw if no LLM credential, just returns empty headers
@@ -201,7 +207,7 @@ def test_get_outgoing_headers_transcribe_audio_translation_optional():
             type="llm_cloud",
             enabled=True,
             model="gpt-4o",
-            api_key="key-abc-123"
+            api_key="key-abc-123",
         )
     ]
     headers = get_outgoing_headers("transcribe_audio", {"target_language": "en"})
@@ -211,6 +217,7 @@ def test_get_outgoing_headers_transcribe_audio_translation_optional():
 
 def test_get_outgoing_headers_sketchfab():
     from local_bridge import get_outgoing_headers, MissingCredentialsError
+
     settings.credentials = []
 
     # load_3d_model throws if no Sketchfab credential is enabled
@@ -225,7 +232,7 @@ def test_get_outgoing_headers_sketchfab():
             name="Sketch 1",
             type="sketchfab",
             enabled=True,
-            access_token="sf-token-12345"
+            access_token="sf-token-12345",
         )
     ]
     headers = get_outgoing_headers("load_3d_model", {})
@@ -234,15 +241,103 @@ def test_get_outgoing_headers_sketchfab():
 
 def test_websocket_instant_missing_credentials_failure():
     from local_bridge import app as lb_app
-    settings.credentials = [] # no credentials
+
+    settings.credentials = []  # no credentials
     client_lb = TestClient(lb_app)
 
     with client_lb.websocket_connect("/ws") as websocket:
-        websocket.send_text(json.dumps({
-            "action": "concept_map",
-            "data": {"topic": "cioccolato"}
-        }))
+        websocket.send_text(
+            json.dumps({"action": "concept_map", "data": {"topic": "cioccolato"}})
+        )
         response = websocket.receive_json()
         assert response["type"] == "error"
         assert response["code"] == "MISSING_CREDENTIALS"
         assert "Nessuna credenziale LLM" in response["message"]
+
+
+def test_scoped_credential_mutual_exclusivity():
+    """
+    Tests that:
+    1. Enabling a scoped credential does not disable an unrelated-scope credential.
+    2. Enabling two credentials with the same scope correctly disables the first.
+    """
+    # Create two credentials with different scopes
+    c1 = {
+        "name": "Concept Map Qwen",
+        "type": "llm_cloud",
+        "scope": "concept_map",
+        "enabled": True,
+        "model": "qwen",
+    }
+    c2 = {
+        "name": "Translate Gemma",
+        "type": "llm_ollama",
+        "scope": "translation",
+        "enabled": True,
+        "model": "gemma",
+    }
+
+    id1 = client.post("/api/credentials", json=c1).json()["id"]
+    id2 = client.post("/api/credentials", json=c2).json()["id"]
+
+    # Toggle c1 enabled state to trigger enforce_mutual_exclusivity
+    client.patch(f"/api/credentials/{id1}", json={"enabled": True})
+
+    # Both should remain enabled because they have different scopes!
+    creds = client.get("/api/credentials").json()
+    assert next(c for c in creds if c["id"] == id1)["enabled"] is True
+    assert next(c for c in creds if c["id"] == id2)["enabled"] is True
+
+    # Add a second translation credential (initially disabled)
+    c3 = {
+        "name": "Translate DeepSeek",
+        "type": "llm_cloud",
+        "scope": "translation",
+        "enabled": False,
+        "model": "deepseek",
+    }
+    id3 = client.post("/api/credentials", json=c3).json()["id"]
+
+    # Enable the second translation credential (c3)
+    client.patch(f"/api/credentials/{id3}", json={"enabled": True})
+
+    # This should disable Translate Gemma (c2) but keep Concept Map Qwen (c1) enabled!
+    creds = client.get("/api/credentials").json()
+    assert next(c for c in creds if c["id"] == id1)["enabled"] is True
+    assert next(c for c in creds if c["id"] == id2)["enabled"] is False
+    assert next(c for c in creds if c["id"] == id3)["enabled"] is True
+
+
+def test_get_outgoing_headers_scoped_resolution_and_fallback():
+    from local_bridge import get_outgoing_headers
+
+    settings.credentials = [
+        Credential(
+            id="global_llm",
+            name="Global LLM",
+            type="llm_cloud",
+            scope="global",
+            enabled=True,
+            model="gpt-global",
+            api_key="key-global",
+        ),
+        Credential(
+            id="map_llm",
+            name="Map LLM",
+            type="llm_cloud",
+            scope="concept_map",
+            enabled=True,
+            model="gpt-map",
+            api_key="key-map",
+        ),
+    ]
+
+    # concept_map action should resolve the scoped Map LLM
+    headers_map = get_outgoing_headers("concept_map", {})
+    assert headers_map["X-LLM-Model"] == "gpt-map"
+    assert headers_map["X-LLM-API-Key"] == "key-map"
+
+    # generate_quiz has no quiz_and_summary credential, so it should fallback to Global LLM
+    headers_quiz = get_outgoing_headers("generate_quiz", {})
+    assert headers_quiz["X-LLM-Model"] == "gpt-global"
+    assert headers_quiz["X-LLM-API-Key"] == "key-global"

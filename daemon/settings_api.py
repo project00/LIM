@@ -31,9 +31,13 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 class Credential(BaseModel):
     """Pydantic model representing LLM or Sketchfab provider credentials."""
+
     id: str
     name: str
     type: Literal["llm_cloud", "llm_ollama", "sketchfab"]
+    scope: Literal[
+        "global", "concept_map", "quiz_and_summary", "translation", "ocr"
+    ] = "global"
     enabled: bool = False
     model: str | None = None
     api_key: str | None = None
@@ -43,11 +47,14 @@ class Credential(BaseModel):
 
 class DaemonSettings(BaseModel):
     """Pydantic model representing local daemon configuration settings."""
+
     remote_base_url: str = "http://192.168.1.100:8000"
     api_key: str = ""
     disable_local_backup: bool = False
     credentials: list[Credential] = []
-    remote_action_timeout_seconds: int = int(os.getenv("REMOTE_ACTION_TIMEOUT_SECONDS", "30"))
+    remote_action_timeout_seconds: int = int(
+        os.getenv("REMOTE_ACTION_TIMEOUT_SECONDS", "30")
+    )
     silence_rms_threshold: int = int(os.getenv("SILENCE_RMS_THRESHOLD", "400"))
 
 
@@ -123,8 +130,11 @@ async def get_config() -> dict:
 
 class ConfigUpdate(BaseModel):
     """Payload schema for updating configuration."""
+
     remote_base_url: str
-    api_key: str | None = None  # Empty/omitted value means do not touch the existing key
+    api_key: str | None = (
+        None  # Empty/omitted value means do not touch the existing key
+    )
     disable_local_backup: bool | None = None
     remote_action_timeout_seconds: int | None = None
     silence_rms_threshold: int | None = None
@@ -175,7 +185,9 @@ async def test_connection() -> dict:
         if resp.status_code == 200:
             logger.info("Remote server health-check succeeded: 200 OK.")
             return {"status": "ok", "latency_ms": latency_ms}
-        logger.warning("Remote server health-check failed with HTTP: %s", resp.status_code)
+        logger.warning(
+            "Remote server health-check failed with HTTP: %s", resp.status_code
+        )
         return {
             "status": "error",
             "latency_ms": latency_ms,
@@ -197,19 +209,27 @@ def mask_key(val: str | None) -> str:
 
 
 def enforce_mutual_exclusivity(active_cred: Credential) -> None:
-    if active_cred.type in ("llm_cloud", "llm_ollama"):
-        for c in settings.credentials:
-            if c.id != active_cred.id and c.type in ("llm_cloud", "llm_ollama"):
-                c.enabled = False
-    elif active_cred.type == "sketchfab":
-        for c in settings.credentials:
-            if c.id != active_cred.id and c.type == "sketchfab":
-                c.enabled = False
+    # Resolve type group
+    active_group = (
+        "llm" if active_cred.type in ("llm_cloud", "llm_ollama") else "sketchfab"
+    )
+    active_scope = getattr(active_cred, "scope", "global")
+
+    for c in settings.credentials:
+        if c.id == active_cred.id:
+            continue
+        c_group = "llm" if c.type in ("llm_cloud", "llm_ollama") else "sketchfab"
+        c_scope = getattr(c, "scope", "global")
+        if c_group == active_group and c_scope == active_scope:
+            c.enabled = False
 
 
 class CredentialCreate(BaseModel):
     name: str
     type: Literal["llm_cloud", "llm_ollama", "sketchfab"]
+    scope: Literal[
+        "global", "concept_map", "quiz_and_summary", "translation", "ocr"
+    ] = "global"
     enabled: bool = False
     model: str | None = None
     api_key: str | None = None
@@ -226,16 +246,21 @@ async def list_credentials() -> list[dict]:
     logger.info("Listing credentials.")
     result = []
     for cred in settings.credentials:
-        result.append({
-            "id": cred.id,
-            "name": cred.name,
-            "type": cred.type,
-            "enabled": cred.enabled,
-            "model": cred.model,
-            "api_key_masked": mask_key(cred.api_key),
-            "api_base": cred.api_base,
-            "access_token_masked": mask_key(cred.access_token)
-        })
+        # Default scope to 'global' if not present in loaded credential
+        scope_val = getattr(cred, "scope", "global")
+        result.append(
+            {
+                "id": cred.id,
+                "name": cred.name,
+                "type": cred.type,
+                "scope": scope_val,
+                "enabled": cred.enabled,
+                "model": cred.model,
+                "api_key_masked": mask_key(cred.api_key),
+                "api_base": cred.api_base,
+                "access_token_masked": mask_key(cred.access_token),
+            }
+        )
     return result
 
 
@@ -247,11 +272,12 @@ async def add_credential(payload: CredentialCreate) -> dict:
         id=new_id,
         name=payload.name,
         type=payload.type,
+        scope=payload.scope,
         enabled=payload.enabled,
         model=payload.model,
         api_key=payload.api_key,
         api_base=payload.api_base,
-        access_token=payload.access_token
+        access_token=payload.access_token,
     )
     if cred.enabled:
         enforce_mutual_exclusivity(cred)
