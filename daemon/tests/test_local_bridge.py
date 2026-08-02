@@ -397,6 +397,155 @@ async def test_start_transcription_double_start() -> None:
             await asyncio.sleep(0.05)
 
 
+@pytest.mark.asyncio
+async def test_fast_ocr_routes_to_ocr_vision_when_credential_enabled() -> None:
+    """Tests that fast_ocr routes to ocr_vision remote action when ocr scope credential is enabled."""
+    from settings_api import settings, Credential
+    client = TestClient(app)
+
+    # Enable an OCR credential
+    original_creds = list(settings.credentials)
+    settings.credentials = [
+        Credential(
+            id="ocr_vision_id",
+            name="My Vision OCR",
+            type="llm_cloud",
+            scope="ocr",
+            enabled=True,
+            model="gpt-4o",
+            api_key="vision-key",
+        )
+    ]
+
+    mock_sct_img = MagicMock()
+    mock_sct_img.size = (100, 100)
+    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
+
+    try:
+        with patch("local_bridge.mss") as mock_mss, \
+             patch("local_bridge.Image.frombytes"), \
+             patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, \
+             patch("local_bridge.httpx.AsyncClient.post") as mock_post:
+
+            mock_instance = mock_mss.return_value.__enter__.return_value
+            mock_instance.grab.return_value = mock_sct_img
+
+            # Mock successful remote vision LLM OCR response
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {
+                "type": "ocr",
+                "source": "remote_vision_llm",
+                "text": "SUCCESSFUL VISION OCR TEXT",
+            }
+            mock_resp.status_code = 200
+            mock_post.return_value = mock_resp
+
+            with client.websocket_connect("/ws") as websocket:
+                websocket.send_text(json.dumps({
+                    "action": "fast_ocr",
+                    "data": {"region": {"x": 10, "y": 20, "width": 100, "height": 100}}
+                }))
+                response = websocket.receive_json()
+                assert response["type"] == "ocr"
+                assert response["source"] == "remote_vision_llm"
+                assert response["text"] == "SUCCESSFUL VISION OCR TEXT"
+                assert mock_post.called
+                assert not mock_tesseract.called
+    finally:
+        settings.credentials = original_creds
+
+
+@pytest.mark.asyncio
+async def test_fast_ocr_uses_local_tesseract_when_no_ocr_credential() -> None:
+    """Tests that fast_ocr uses local Tesseract OCR directly if no ocr scope credential is enabled."""
+    from settings_api import settings
+    client = TestClient(app)
+
+    original_creds = list(settings.credentials)
+    settings.credentials = []  # No ocr credential enabled
+
+    mock_sct_img = MagicMock()
+    mock_sct_img.size = (100, 100)
+    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
+
+    try:
+        with patch("local_bridge.mss") as mock_mss, \
+             patch("local_bridge.Image.frombytes"), \
+             patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, \
+             patch("local_bridge.httpx.AsyncClient.post") as mock_post:
+
+            mock_instance = mock_mss.return_value.__enter__.return_value
+            mock_instance.grab.return_value = mock_sct_img
+            mock_tesseract.return_value = "LOCAL TESSERACT CONTENT"
+
+            with client.websocket_connect("/ws") as websocket:
+                websocket.send_text(json.dumps({
+                    "action": "fast_ocr",
+                    "data": {"region": {"x": 10, "y": 20, "width": 100, "height": 100}}
+                }))
+                response = websocket.receive_json()
+                assert response["type"] == "ocr"
+                assert response["source"] == "local_engine"
+                assert response["text"] == "LOCAL TESSERACT CONTENT"
+                assert not mock_post.called
+                assert mock_tesseract.called
+    finally:
+        settings.credentials = original_creds
+
+
+@pytest.mark.asyncio
+async def test_fast_ocr_falls_back_to_tesseract_when_vision_call_fails() -> None:
+    """Tests that fast_ocr falls back to local Tesseract OCR if the remote Vision API call fails."""
+    from settings_api import settings, Credential
+    client = TestClient(app)
+
+    original_creds = list(settings.credentials)
+    settings.credentials = [
+        Credential(
+            id="ocr_vision_id",
+            name="My Vision OCR",
+            type="llm_cloud",
+            scope="ocr",
+            enabled=True,
+            model="gpt-4o",
+            api_key="vision-key",
+        )
+    ]
+
+    mock_sct_img = MagicMock()
+    mock_sct_img.size = (100, 100)
+    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
+
+    try:
+        with patch("local_bridge.mss") as mock_mss, \
+             patch("local_bridge.Image.frombytes"), \
+             patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, \
+             patch("local_bridge.httpx.AsyncClient.post") as mock_post:
+
+            mock_instance = mock_mss.return_value.__enter__.return_value
+            mock_instance.grab.return_value = mock_sct_img
+            mock_tesseract.return_value = "FALLBACK TESSERACT CONTENT"
+
+            # Mock remote call raising exception to simulate failure
+            mock_post.side_effect = httpx.HTTPStatusError(
+                "500 Internal Server Error", request=None, response=None
+            )
+
+            with client.websocket_connect("/ws") as websocket:
+                websocket.send_text(json.dumps({
+                    "action": "fast_ocr",
+                    "data": {"region": {"x": 10, "y": 20, "width": 100, "height": 100}}
+                }))
+                response = websocket.receive_json()
+                assert response["type"] == "ocr"
+                assert response["source"] == "local_engine"
+                assert response["text"] == "FALLBACK TESSERACT CONTENT"
+                assert mock_post.called
+                assert mock_tesseract.called
+    finally:
+        settings.credentials = original_creds
+
+
 import time
 
 @pytest.mark.asyncio

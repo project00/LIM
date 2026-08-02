@@ -231,6 +231,7 @@ def get_active_llm_credential(action: str | None) -> Credential | None:
         "generate_summary": "quiz_and_summary",
         "transcribe_audio": "translation",
         "fast_ocr": "ocr",
+        "ocr_vision": "ocr",
         "ocr": "ocr",
     }
     target_scope = scope_map.get(action, "global") if action else "global"
@@ -261,7 +262,12 @@ def get_outgoing_headers(action: str, payload_data: dict) -> dict:
     headers = {}
 
     # 1. LLM action check
-    is_llm_action = action in ("concept_map", "generate_quiz", "generate_summary")
+    is_llm_action = action in (
+        "concept_map",
+        "generate_quiz",
+        "generate_summary",
+        "ocr_vision",
+    )
     is_translation_stt = action == "transcribe_audio" and bool(
         payload_data.get("target_language")
     )
@@ -859,6 +865,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         width = region.get("width", 1920)
                         height = region.get("height", 1080)
 
+                        img = None
+                        capture_error = None
                         try:
                             import tempfile
 
@@ -879,22 +887,95 @@ async def websocket_endpoint(websocket: WebSocket):
                                     suffix=".png", delete=False
                                 ) as tmp_file:
                                     img.save(tmp_file.name)
-
-                            # Perform real OCR on the captured PIL Image using pytesseract
-                            response_text = pytesseract.image_to_string(img).strip()
-                            logger.info(
-                                "Screen capture successfully processed with Tesseract OCR."
-                            )
                         except Exception as e:
-                            # Note display access limitation explicitly
                             logger.error(
                                 f"Failed to capture screen or perform OCR: {e}. Headless display environment restriction may apply."
                             )
-                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {e}]"
+                            capture_error = e
+
+                        # 1. OCR Vision Dynamic Routing Exception:
+                        # Check for an enabled credential with scope=="ocr". If found, send the image
+                        # (base64) to the server action "ocr_vision" instead of running local Tesseract.
+                        # If NOT found, or if the vision call fails, fall back to local Tesseract OCR.
+                        active_ocr_cred = get_active_llm_credential("fast_ocr")
+                        response_text = None
+                        source_engine = "local_engine"
+
+                        if capture_error is not None:
+                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {capture_error}]"
+                        elif active_ocr_cred and img is not None:
+                            logger.info(
+                                "Enabled 'ocr' scope credential found. Attempting remote Vision-LLM OCR..."
+                            )
+                            try:
+                                import io
+                                import base64
+
+                                buffered = io.BytesIO()
+                                img.save(buffered, format="PNG")
+                                image_base64 = base64.b64encode(buffered.getvalue()).decode(
+                                    "utf-8"
+                                )
+
+                                ocr_vision_payload = {
+                                    "action": "ocr_vision",
+                                    "data": {"image_base64": image_base64},
+                                }
+
+                                remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                                req_headers = (
+                                    {"Authorization": f"Bearer {settings.api_key}"}
+                                    if settings.api_key
+                                    else {}
+                                )
+                                custom_headers = get_outgoing_headers("ocr_vision", {})
+                                req_headers.update(custom_headers)
+
+                                response = await http_client.post(
+                                    remote_analyze_url,
+                                    json=ocr_vision_payload,
+                                    headers=req_headers,
+                                )
+                                response.raise_for_status()
+                                response_json = response.json()
+
+                                if response_json.get("type") == "error":
+                                    logger.warning(
+                                        "Remote Vision OCR returned error response: %s. Falling back to Tesseract.",
+                                        response_json.get("message"),
+                                    )
+                                else:
+                                    response_text = response_json.get("text")
+                                    source_engine = "remote_vision_llm"
+                                    logger.info(
+                                        "Successfully completed remote Vision-LLM OCR."
+                                    )
+                            except Exception as ve:
+                                logger.error(
+                                    "Remote Vision OCR call failed due to: %s. Falling back to Tesseract.",
+                                    ve,
+                                    exc_info=True,
+                                )
+
+                        # Fallback to local Tesseract if remote Vision OCR was not used or failed
+                        if response_text is None:
+                            if img is not None:
+                                try:
+                                    response_text = pytesseract.image_to_string(img).strip()
+                                    logger.info(
+                                        "Screen capture successfully processed with Tesseract OCR (fallback/default)."
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to perform local Tesseract OCR: {e}."
+                                    )
+                                    response_text = f"[OCR local fallback failed: {e}]"
+                            else:
+                                response_text = "[OCR failed: capture failed]"
 
                         ocr_payload = {
                             "type": "ocr",
-                            "source": "local_engine",
+                            "source": source_engine,
                             "text": response_text,
                         }
                         await websocket.send_text(json.dumps(ocr_payload))
