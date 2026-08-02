@@ -975,6 +975,7 @@ async def test_load_3d_model_local_caching() -> None:
             # Assert rewritten URL and preserved attribution
             assert response1["type"] == "model_3d"
             assert response1["source"] == "remote_index"
+            assert response1["model_url"].startswith("http://")
             assert "/models_cache/" in response1["model_url"]
             assert response1["label"] == "Water Molecule"
             assert response1["attribution"]["author"] == "Science Lab"
@@ -997,6 +998,7 @@ async def test_load_3d_model_local_caching() -> None:
 
             # Assert served from cache immediately with identical rewritten details
             assert response2["type"] == "model_3d"
+            assert response2["model_url"].startswith("http://")
             assert "/models_cache/" in response2["model_url"]
             assert response2["label"] == "Water Molecule"
             assert response2["attribution"]["author"] == "Science Lab"

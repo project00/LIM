@@ -16,6 +16,9 @@ import os
 import sys
 from fastapi.staticfiles import StaticFiles
 
+DAEMON_HOST = "127.0.0.1"
+DAEMON_PORT = 5000
+
 def is_disconnect_exception(e: Exception) -> bool:
     """
     Helper to identify common websocket/client disconnection exceptions
@@ -299,7 +302,7 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
             return {
                 "type": "model_3d",
                 "source": "remote_index",
-                "model_url": f"/models_cache/{cache_key}/scene.gltf",
+                "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
                 "label": metadata["title"],
                 "attribution": metadata["attribution"]
             }
@@ -386,7 +389,7 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
     return {
         "type": "model_3d",
         "source": "remote_index",
-        "model_url": f"/models_cache/{cache_key}/scene.gltf",
+        "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
         "label": metadata["title"],
         "attribution": metadata["attribution"]
     }
@@ -858,4 +861,4 @@ configure_tesseract_path()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=5000)
+    uvicorn.run(app, host=DAEMON_HOST, port=DAEMON_PORT)
