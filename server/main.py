@@ -23,8 +23,7 @@ from slowapi.errors import RateLimitExceeded
 
 # Configure logging using standard logging library as per AGENTS.md philosophy
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("mock_remote_server")
 
@@ -32,7 +31,9 @@ logger = logging.getLogger("mock_remote_server")
 API_KEY = os.getenv("API_KEY")
 if not API_KEY:
     # Fail to start immediately with a clear error if it's not configured
-    raise RuntimeError("API_KEY environment variable is not configured. Server startup aborted.")
+    raise RuntimeError(
+        "API_KEY environment variable is not configured. Server startup aborted."
+    )
 
 # Import the graph service and validation errors (will also validate LLM_MODEL is configured at startup)
 from services.graph_service import generate_concept_map  # noqa: E402
@@ -43,6 +44,7 @@ from services.quiz_service import generate_quiz  # noqa: E402
 from services.quiz_validator import InvalidQuizError  # noqa: E402
 from services.model_service import search_and_fetch_3d_model  # noqa: E402
 from services.summary_service import generate_summary  # noqa: E402
+from services.ocr_vision_service import generate_ocr_vision  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 current_request = contextvars.ContextVar("current_request", default=None)
@@ -50,7 +52,7 @@ current_request = contextvars.ContextVar("current_request", default=None)
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
     description="Mock remote server for development verification and API routing with authentication",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 
@@ -94,7 +96,9 @@ def get_bearer_token(request: Request) -> str:
     Key function for rate limiting that extracts the Authorization Bearer token.
     Falls back to remote address if missing or malformed.
     """
-    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+    authorization = request.headers.get("Authorization") or request.headers.get(
+        "authorization"
+    )
     if authorization:
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
@@ -107,7 +111,9 @@ app.state.limiter = limiter
 
 
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+async def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
     """
     Custom exception handler for rate limits that returns an application error payload
     with HTTP 200, matching the local bridge raise_for_status expectations.
@@ -126,8 +132,8 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) 
             "type": "error",
             "code": "RATE_LIMITED",
             "action": action,
-            "message": f"Rate limit exceeded: maximum {limit_val} requests per minute are allowed."
-        }
+            "message": f"Rate limit exceeded: maximum {limit_val} requests per minute are allowed.",
+        },
     )
 
 
@@ -150,23 +156,27 @@ async def verify_api_key(authorization: str = Header(default=None)) -> None:
         logger.warning("Access denied: Authorization header is missing.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key"
+            detail="Invalid or missing API key",
         )
 
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        logger.warning("Access denied: Authorization header format must be Bearer <token>.")
+        logger.warning(
+            "Access denied: Authorization header format must be Bearer <token>."
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key"
+            detail="Invalid or missing API key",
         )
 
     token = parts[1]
     if token != API_KEY:
-        logger.warning("Access denied: Provided API key token does not match the configured secret.")
+        logger.warning(
+            "Access denied: Provided API key token does not match the configured secret."
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key"
+            detail="Invalid or missing API key",
         )
 
 
@@ -196,7 +206,9 @@ async def health() -> Dict[str, str]:
 
 @app.post("/api/v1/analyze")
 @limiter.limit(get_rate_limit)
-async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depends(verify_api_key)) -> Dict[str, Any]:
+async def analyze(
+    request: Request, payload: Dict[str, Any], _auth: None = Depends(verify_api_key)
+) -> Dict[str, Any]:
     """
     Mock analyze endpoint that echoes back request payloads with added metadata.
     Requires dynamic bearer token verification.
@@ -217,16 +229,23 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
     # Extract X-LLM-Model / X-LLM-API-Key / X-LLM-API-Base / X-Sketchfab-Token from headers
     x_model = request.headers.get("X-LLM-Model") or request.headers.get("x-llm-model")
     x_key = request.headers.get("X-LLM-API-Key") or request.headers.get("x-llm-api-key")
-    x_base = request.headers.get("X-LLM-API-Base") or request.headers.get("x-llm-api-base")
-    x_sf_token = request.headers.get("X-Sketchfab-Token") or request.headers.get("x-sketchfab-token")
+    x_base = request.headers.get("X-LLM-API-Base") or request.headers.get(
+        "x-llm-api-base"
+    )
+    x_sf_token = request.headers.get("X-Sketchfab-Token") or request.headers.get(
+        "x-sketchfab-token"
+    )
 
-    # Missing credentials check for concept_map, generate_quiz, generate_summary
-    if action in ("concept_map", "generate_quiz", "generate_summary") and not x_model:
+    # Missing credentials check for concept_map, generate_quiz, generate_summary, ocr_vision
+    if (
+        action in ("concept_map", "generate_quiz", "generate_summary", "ocr_vision")
+        and not x_model
+    ):
         return {
             "type": "error",
             "code": "MISSING_CREDENTIALS",
             "action": action,
-            "message": "Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una."
+            "message": "Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una.",
         }
 
     # Extract credentials from payload if present (keeping compatibility)
@@ -242,7 +261,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
         if not topic:
             raise HTTPException(
                 status_code=400,
-                detail="Missing 'topic' field inside 'data' for 'concept_map' action"
+                detail="Missing 'topic' field inside 'data' for 'concept_map' action",
             )
         language = data_obj.get("language", "it")
 
@@ -253,7 +272,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             return {
                 "type": "concept_map",
                 "source": "remote_llm",
-                "mermaid_code": mermaid_code
+                "mermaid_code": mermaid_code,
             }
         except InvalidMermaidError as e:
             logger.warning("Mermaid validation error occurred: %s", e)
@@ -261,7 +280,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "error",
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "concept_map",
-                "message": str(e)
+                "message": str(e),
             }
 
     elif action == "load_3d_model":
@@ -270,7 +289,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "error",
                 "code": "MISSING_CREDENTIALS",
                 "action": action,
-                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una."
+                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.",
             }
 
         data_obj = payload.get("data") or {}
@@ -278,7 +297,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
         if not query:
             raise HTTPException(
                 status_code=400,
-                detail="Missing 'query' field inside 'data' for 'load_3d_model' action"
+                detail="Missing 'query' field inside 'data' for 'load_3d_model' action",
             )
 
         try:
@@ -288,7 +307,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "source": "remote_index",
                 "model_url": model_metadata["model_url"],
                 "label": model_metadata["title"],
-                "attribution": model_metadata["attribution"]
+                "attribution": model_metadata["attribution"],
             }
         except ValueError as e:
             logger.warning("3D model not found for query '%s': %s", query, e)
@@ -296,7 +315,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "error",
                 "code": "MODEL_NOT_FOUND",
                 "action": "load_3d_model",
-                "message": str(e)
+                "message": str(e),
             }
         except Exception as e:
             logger.error("Sketchfab download or service error: %s", e, exc_info=True)
@@ -304,7 +323,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "error",
                 "code": "REMOTE_SERVICE_ERROR",
                 "action": "load_3d_model",
-                "message": f"Errore del servizio Sketchfab o download fallito: {str(e)}"
+                "message": f"Errore del servizio Sketchfab o download fallito: {str(e)}",
             }
 
     elif action == "generate_quiz":
@@ -321,27 +340,29 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 num_questions = 4
 
         try:
-            questions = generate_quiz(lesson_context, num_questions, x_model, x_key, x_base)
-            return {
-                "type": "quiz",
-                "source": "remote_llm",
-                "questions": questions
-            }
+            questions = generate_quiz(
+                lesson_context, num_questions, x_model, x_key, x_base
+            )
+            return {"type": "quiz", "source": "remote_llm", "questions": questions}
         except InvalidQuizError as e:
             logger.warning("Quiz validation error occurred: %s", e)
             return {
                 "type": "error",
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "generate_quiz",
-                "message": str(e)
+                "message": str(e),
             }
         except Exception as e:
-            logger.error("LLM provider or unexpected error during quiz generation: %s", e, exc_info=True)
+            logger.error(
+                "LLM provider or unexpected error during quiz generation: %s",
+                e,
+                exc_info=True,
+            )
             return {
                 "type": "error",
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "generate_quiz",
-                "message": f"Errore del servizio LLM o output non valido: {str(e)}"
+                "message": f"Errore del servizio LLM o output non valido: {str(e)}",
             }
 
     elif action == "transcribe_audio":
@@ -356,7 +377,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 detail=(
                     "Missing required fields ('audio_base64', 'sample_rate', 'encoding') "
                     "inside 'data' for 'transcribe_audio' action"
-                )
+                ),
             )
 
         try:
@@ -364,7 +385,7 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             text = transcribe_audio(
                 audio_base64=audio_base64,
                 sample_rate=int(sample_rate),
-                encoding=str(encoding)
+                encoding=str(encoding),
             )
 
             target_language = data_obj.get("target_language")
@@ -372,11 +393,13 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
             if target_language:
                 if x_model:
                     try:
-                        translated_text = translate_text(text, str(target_language), x_model, x_key, x_base)
+                        translated_text = translate_text(
+                            text, str(target_language), x_model, x_key, x_base
+                        )
                     except openai.OpenAIError as e:
                         logger.error(
                             f"Translation failed due to LLM provider error: {e}",
-                            exc_info=True
+                            exc_info=True,
                         )
                 else:
                     logger.info("Translation skipped: X-LLM-Model header is missing.")
@@ -385,14 +408,37 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "transcription",
                 "source": "remote_stt",
                 "text": text,
-                "translated_text": translated_text
+                "translated_text": translated_text,
             }
         except ValueError as e:
             logger.warning("Validation error during audio transcription: %s", e)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             logger.error("Internal error during audio transcription: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error during transcription")
+            raise HTTPException(
+                status_code=500, detail="Internal server error during transcription"
+            )
+
+    elif action == "ocr_vision":
+        data_obj = payload.get("data") or {}
+        image_base64 = data_obj.get("image_base64")
+        if not image_base64:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'image_base64' field inside 'data' for 'ocr_vision' action",
+            )
+
+        try:
+            ocr_text = generate_ocr_vision(image_base64, x_model, x_key, x_base)
+            return {"type": "ocr", "source": "remote_vision_llm", "text": ocr_text}
+        except Exception as e:
+            logger.error("Vision OCR service error: %s", e, exc_info=True)
+            return {
+                "type": "error",
+                "code": "INVALID_LLM_OUTPUT",
+                "action": "ocr_vision",
+                "message": f"Errore del servizio LLM o output non valido: {str(e)}",
+            }
 
     elif action == "generate_summary":
         data_obj = payload.get("data") or {}
@@ -403,23 +449,23 @@ async def analyze(request: Request, payload: Dict[str, Any], _auth: None = Depen
                 "type": "error",
                 "code": "EMPTY_LESSON_LOG",
                 "action": "generate_summary",
-                "message": "Nessun contenuto da riassumere ancora"
+                "message": "Nessun contenuto da riassumere ancora",
             }
 
         try:
             summary_text = generate_summary(lesson_log, x_model, x_key, x_base)
-            return {
-                "type": "summary",
-                "source": "remote_llm",
-                "summary": summary_text
-            }
+            return {"type": "summary", "source": "remote_llm", "summary": summary_text}
         except Exception as e:
-            logger.error("LLM provider or unexpected error during summary generation: %s", e, exc_info=True)
+            logger.error(
+                "LLM provider or unexpected error during summary generation: %s",
+                e,
+                exc_info=True,
+            )
             return {
                 "type": "error",
                 "code": "INVALID_LLM_OUTPUT",
                 "action": "generate_summary",
-                "message": f"Errore del servizio LLM o output non valido: {str(e)}"
+                "message": f"Errore del servizio LLM o output non valido: {str(e)}",
             }
 
     # Mirror back the payload with augmented metadata for non-implemented remote actions
