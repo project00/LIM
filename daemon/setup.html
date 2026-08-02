@@ -45,6 +45,7 @@
       <tr>
         <th>Nome</th>
         <th>Tipo</th>
+        <th>Ambito</th>
         <th>Valore</th>
         <th>Abilitato</th>
         <th></th>
@@ -67,6 +68,18 @@
         <option value="sketchfab">Sketchfab</option>
       </select>
     </label>
+
+    <div id="fields-scope" style="display: block;">
+      <label>Ambito
+        <select id="cred-scope" style="width:100%; box-sizing:border-box; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #45475a; background:#181825; color:#cdd6f4;">
+          <option value="global">Generale (fallback)</option>
+          <option value="concept_map">Mappe Concettuali</option>
+          <option value="quiz_and_summary">Quiz e Sintesi</option>
+          <option value="translation">Traduzione</option>
+          <option value="ocr">OCR (richiede un modello con supporto immagini, es. llama3.2-vision o gpt-4o)</option>
+        </select>
+      </label>
+    </div>
 
     <div id="fields-llm-cloud" class="cond-field" style="display: block;">
       <label>Modello (es. gpt-4o, gpt-4o-mini)
@@ -136,6 +149,7 @@ credTypeSelect.onchange = () => {
   document.getElementById("fields-llm-cloud").style.display = type === "llm_cloud" ? "block" : "none";
   document.getElementById("fields-llm-ollama").style.display = type === "llm_ollama" ? "block" : "none";
   document.getElementById("fields-sketchfab").style.display = type === "sketchfab" ? "block" : "none";
+  document.getElementById("fields-scope").style.display = (type === "llm_cloud" || type === "llm_ollama") ? "block" : "none";
 };
 
 // Fetch and display all credentials
@@ -168,9 +182,21 @@ async function loadCredentials() {
       else if (c.type === "llm_ollama") typeLabel = "Ollama";
       else if (c.type === "sketchfab") typeLabel = "Sketchfab";
 
+      // Scope label mapping
+      let scopeLabel = "-";
+      if (c.type === "llm_cloud" || c.type === "llm_ollama") {
+        const scope = c.scope || "global";
+        if (scope === "global") scopeLabel = "Generale (fallback)";
+        else if (scope === "concept_map") scopeLabel = "Mappe Concettuali";
+        else if (scope === "quiz_and_summary") scopeLabel = "Quiz e Sintesi";
+        else if (scope === "translation") scopeLabel = "Traduzione";
+        else if (scope === "ocr") scopeLabel = "OCR";
+      }
+
       tr.innerHTML = `
         <td><strong>${c.name}</strong></td>
         <td>${typeLabel}</td>
+        <td><span style="font-size:11px; background:#313244; padding:2px 6px; border-radius:4px;">${scopeLabel}</span></td>
         <td style="font-family:monospace; font-size:11px;">${valDisplay}</td>
         <td>
           <input type="checkbox" style="width:auto; margin:0;" ${c.enabled ? "checked" : ""} data-id="${c.id}" class="toggle-enabled-cb">
@@ -223,6 +249,10 @@ document.getElementById("add-cred-btn").onclick = async () => {
   }
   const type = credTypeSelect.value;
   const body = { name, type, enabled: false };
+
+  if (type === "llm_cloud" || type === "llm_ollama") {
+    body.scope = document.getElementById("cred-scope").value;
+  }
 
   if (type === "llm_cloud") {
     body.model = document.getElementById("cloud-model").value.trim() || "gpt-4o-mini";

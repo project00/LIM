@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 DAEMON_HOST = "127.0.0.1"
 DAEMON_PORT = 5000
 
+
 def is_disconnect_exception(e: Exception) -> bool:
     """
     Helper to identify common websocket/client disconnection exceptions
@@ -28,21 +29,26 @@ def is_disconnect_exception(e: Exception) -> bool:
         return True
     if isinstance(e, RuntimeError):
         msg = str(e).lower()
-        if "is not connected" in msg or "disconnected" in msg or "unexpected asgi message" in msg:
+        if (
+            "is not connected" in msg
+            or "disconnected" in msg
+            or "unexpected asgi message" in msg
+        ):
             return True
     return False
 
+
 # Import the configuration settings and routes router dynamically
-from settings_api import settings, router as settings_router
+from settings_api import settings, router as settings_router, Credential
 
 # Configure standard logger following AGENTS.md
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("local_bridge")
 
 import re
+
 
 def parse_filename_timestamp(filename: str) -> datetime.datetime | None:
     """
@@ -82,7 +88,9 @@ def cleanup_old_backups(backups_dir: str | None = None) -> None:
     try:
         retention_days = int(os.getenv("LESSON_BACKUP_RETENTION_DAYS", "30"))
         if backups_dir is None:
-            backups_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
+            backups_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "lesson_backups")
+            )
         if not os.path.exists(backups_dir):
             return
 
@@ -103,12 +111,18 @@ def cleanup_old_backups(backups_dir: str | None = None) -> None:
                 if dt and dt < threshold:
                     os.remove(filepath)
                     deleted_count += 1
-                    logger.info(f"Deleted old lesson backup file: '{filename}' (timestamp: {dt.isoformat()})")
+                    logger.info(
+                        f"Deleted old lesson backup file: '{filename}' (timestamp: {dt.isoformat()})"
+                    )
             except Exception as e:
-                logger.error(f"Failed to process backup file '{filename}' during cleanup: {e}")
+                logger.error(
+                    f"Failed to process backup file '{filename}' during cleanup: {e}"
+                )
 
         if deleted_count > 0:
-            logger.info(f"Cleanup complete. Deleted {deleted_count} old lesson backup files.")
+            logger.info(
+                f"Cleanup complete. Deleted {deleted_count} old lesson backup files."
+            )
         else:
             logger.info("Cleanup complete. No old lesson backup files were found.")
     except Exception as e:
@@ -128,12 +142,14 @@ app.include_router(settings_router)
 
 from fastapi import Response
 
+
 class CORSStaticFiles(StaticFiles):
     """
     Custom StaticFiles wrapper that appends CORS headers to responses,
     allowing 3D model assets to be loaded by <model-viewer> inside
     the widget even when running on a different origin (like file://).
     """
+
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
         response.headers["Access-Control-Allow-Origin"] = "*"
@@ -141,12 +157,17 @@ class CORSStaticFiles(StaticFiles):
         response.headers["Access-Control-Allow-Headers"] = "*"
         return response
 
+
 # Serve local 3D models cache under /models_cache
 os.makedirs("model_cache", exist_ok=True)
-app.mount("/models_cache", CORSStaticFiles(directory="model_cache"), name="models_cache")
+app.mount(
+    "/models_cache", CORSStaticFiles(directory="model_cache"), name="models_cache"
+)
 
 
-async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path: str | None) -> None:
+async def send_and_backup(
+    websocket: WebSocket, message: dict | str, backup_path: str | None
+) -> None:
     """
     Sends the message over the websocket and, if the message represents valid lesson content,
     appends it as a single JSON line to the session's backup file.
@@ -156,7 +177,9 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
         await websocket.send_text(message_str)
     except Exception as e:
         if is_disconnect_exception(e):
-            logger.info("Widget disconnesso durante l'invio (send_and_backup), arresto pulito.")
+            logger.info(
+                "Widget disconnesso durante l'invio (send_and_backup), arresto pulito."
+            )
             raise WebSocketDisconnect()
         raise
 
@@ -183,7 +206,7 @@ async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path
     # Only backup valid lesson content (sympy_math, concept_map, load_3d_model, generate_quiz, generate_summary, and final subtitle)
     backup_entry = {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "message": msg_dict
+        "message": msg_dict,
     }
 
     try:
@@ -200,15 +223,51 @@ class MissingCredentialsError(Exception):
         self.message = message
 
 
+def get_active_llm_credential(action: str | None) -> Credential | None:
+    """Resolves active LLM credential based on action scope with fallback to global."""
+    scope_map = {
+        "concept_map": "concept_map",
+        "generate_quiz": "quiz_and_summary",
+        "generate_summary": "quiz_and_summary",
+        "transcribe_audio": "translation",
+        "fast_ocr": "ocr",
+        "ocr": "ocr",
+    }
+    target_scope = scope_map.get(action, "global") if action else "global"
+
+    # 1. Search for specifically scoped LLM credential that is enabled
+    for c in settings.credentials:
+        if (
+            c.enabled
+            and c.type in ("llm_cloud", "llm_ollama")
+            and getattr(c, "scope", "global") == target_scope
+        ):
+            return c
+
+    # 2. Fallback to 'global' scope
+    if target_scope != "global":
+        for c in settings.credentials:
+            if (
+                c.enabled
+                and c.type in ("llm_cloud", "llm_ollama")
+                and getattr(c, "scope", "global") == "global"
+            ):
+                return c
+
+    return None
+
+
 def get_outgoing_headers(action: str, payload_data: dict) -> dict:
     headers = {}
 
     # 1. LLM action check
     is_llm_action = action in ("concept_map", "generate_quiz", "generate_summary")
-    is_translation_stt = action == "transcribe_audio" and bool(payload_data.get("target_language"))
+    is_translation_stt = action == "transcribe_audio" and bool(
+        payload_data.get("target_language")
+    )
 
     if is_llm_action or is_translation_stt:
-        active_llm = next((c for c in settings.credentials if c.enabled and c.type in ("llm_cloud", "llm_ollama")), None)
+        active_llm = get_active_llm_credential(action)
         if active_llm:
             if active_llm.model:
                 headers["X-LLM-Model"] = active_llm.model
@@ -218,24 +277,34 @@ def get_outgoing_headers(action: str, payload_data: dict) -> dict:
                 headers["X-LLM-API-Base"] = active_llm.api_base
         else:
             if is_llm_action:
-                raise MissingCredentialsError("Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una.")
+                raise MissingCredentialsError(
+                    "Nessuna credenziale LLM configurata e abilitata. Vai su /setup per aggiungerne una."
+                )
 
     # 2. Sketchfab action check
     if action == "load_3d_model":
-        active_sf = next((c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None)
+        active_sf = next(
+            (c for c in settings.credentials if c.enabled and c.type == "sketchfab"),
+            None,
+        )
         if active_sf:
             if active_sf.access_token:
                 headers["X-Sketchfab-Token"] = active_sf.access_token
         else:
-            raise MissingCredentialsError("Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.")
+            raise MissingCredentialsError(
+                "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una."
+            )
 
     return headers
 
 
 def attach_active_credentials(payload: dict) -> None:
     """Helper to attach active LLM and Sketchfab credentials from settings into the request payload."""
-    active_llm = next((c for c in settings.credentials if c.enabled and c.type in ("llm_cloud", "llm_ollama")), None)
-    active_sf = next((c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None)
+    action = payload.get("action")
+    active_llm = get_active_llm_credential(action)
+    active_sf = next(
+        (c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None
+    )
 
     daemon_credentials = {}
     if active_llm:
@@ -243,12 +312,10 @@ def attach_active_credentials(payload: dict) -> None:
             "type": active_llm.type,
             "model": active_llm.model,
             "api_key": active_llm.api_key,
-            "api_base": active_llm.api_base
+            "api_base": active_llm.api_base,
         }
     if active_sf:
-        daemon_credentials["sketchfab"] = {
-            "access_token": active_sf.access_token
-        }
+        daemon_credentials["sketchfab"] = {"access_token": active_sf.access_token}
 
     if daemon_credentials:
         payload["credentials"] = daemon_credentials
@@ -280,7 +347,12 @@ class ModelRouter:
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "model_cache"))
 
 
-async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, payload: dict, custom_headers: dict | None = None) -> dict:
+async def handle_load_3d_model(
+    query: str,
+    http_client: httpx.AsyncClient,
+    payload: dict,
+    custom_headers: dict | None = None,
+) -> dict:
     """
     Handles loading a 3D model with local caching on the daemon.
     Checks the local cache first by hashing the query. If a hit occurs, serves it immediately.
@@ -304,7 +376,7 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
                 "source": "remote_index",
                 "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
                 "label": metadata["title"],
-                "attribution": metadata["attribution"]
+                "attribution": metadata["attribution"],
             }
         except Exception as e:
             logger.error("Failed to read metadata.json from local cache: %s", e)
@@ -313,7 +385,9 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
     logger.info("Local Daemon Cache MISS for 3D model query: '%s'", query)
 
     remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
-    headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+    headers = (
+        {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+    )
     if custom_headers:
         headers.update(custom_headers)
 
@@ -381,7 +455,7 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
     metadata = {
         "uid": response_data.get("uid", cache_key),
         "title": response_data.get("label", query),
-        "attribution": response_data.get("attribution", {})
+        "attribution": response_data.get("attribution", {}),
     }
     with open(metadata_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=4)
@@ -391,7 +465,7 @@ async def handle_load_3d_model(query: str, http_client: httpx.AsyncClient, paylo
         "source": "remote_index",
         "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
         "label": metadata["title"],
-        "attribution": metadata["attribution"]
+        "attribution": metadata["attribution"],
     }
 
 
@@ -426,6 +500,7 @@ class LocalEngine:
                             if isinstance(y_val, complex):
                                 continue
                             import math
+
                             if not math.isfinite(y_val):
                                 continue
 
@@ -436,10 +511,7 @@ class LocalEngine:
                             continue
 
                     if len(x_vals) > 0:
-                        plot_data = {
-                            "x": x_vals,
-                            "y": y_vals
-                        }
+                        plot_data = {"x": x_vals, "y": y_vals}
                 except Exception:
                     plot_data = None
 
@@ -496,10 +568,17 @@ class TranscriptionSession:
         self.target_language: str | None = None
         self.backup_path: str | None = None
 
-    async def start(self, websocket: WebSocket, target_language: str | None, backup_path: str | None = None) -> None:
+    async def start(
+        self,
+        websocket: WebSocket,
+        target_language: str | None,
+        backup_path: str | None = None,
+    ) -> None:
         """Starts a background audio capture loop."""
         if self.is_running:
-            logger.warning("Transcription already running. Stopping previous stream first.")
+            logger.warning(
+                "Transcription already running. Stopping previous stream first."
+            )
             await self.stop()
 
         self.websocket = websocket
@@ -517,7 +596,7 @@ class TranscriptionSession:
                 channels=1,
                 rate=16000,
                 input=True,
-                frames_per_buffer=1024
+                frames_per_buffer=1024,
             )
         except Exception as e:
             logger.error(f"Failed to open PyAudio input device: {e}")
@@ -539,7 +618,7 @@ class TranscriptionSession:
                 "type": "error",
                 "code": "NO_AUDIO_DEVICE",
                 "action": "start_transcription",
-                "message": f"Could not open audio input device: {e}"
+                "message": f"Could not open audio input device: {e}",
             }
             await websocket.send_text(json.dumps(error_payload))
             return
@@ -558,9 +637,14 @@ class TranscriptionSession:
 
         logger.info("Microphone background capture loop started.")
         import base64
+
         try:
             buffer = bytearray()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)) as http_client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    settings.remote_action_timeout_seconds, connect=5.0
+                )
+            ) as http_client:
                 while self.is_running and self.stream:
                     # Read frames in a thread to avoid blocking the event loop
                     data = await asyncio.to_thread(
@@ -584,11 +668,15 @@ class TranscriptionSession:
                                 f"[Audio Capture] Skipped silent chunk: RMS={rms_val:.1f} "
                                 f"below threshold={settings.silence_rms_threshold}"
                             )
-                            await asyncio.sleep(0.01) # Safe yield to prevent tight loop CPU starvation
+                            await asyncio.sleep(
+                                0.01
+                            )  # Safe yield to prevent tight loop CPU starvation
                             continue
 
                         # Calculate duration
-                        duration = len(chunk_to_process) / (rate * channels * bytes_per_sample)
+                        duration = len(chunk_to_process) / (
+                            rate * channels * bytes_per_sample
+                        )
                         logger.info(
                             f"[Audio Capture] Captured chunk: size={len(chunk_to_process)} bytes, "
                             f"duration={duration:.2f}s, RMS={rms_val:.1f}"
@@ -602,8 +690,8 @@ class TranscriptionSession:
                                 "audio_base64": audio_b64,
                                 "sample_rate": 16000,
                                 "encoding": "pcm_s16le",
-                                "target_language": self.target_language
-                            }
+                                "target_language": self.target_language,
+                            },
                         }
                         attach_active_credentials(payload)
 
@@ -612,14 +700,16 @@ class TranscriptionSession:
                             headers["Authorization"] = f"Bearer {settings.api_key}"
 
                         try:
-                            llm_headers = get_outgoing_headers("transcribe_audio", payload["data"])
+                            llm_headers = get_outgoing_headers(
+                                "transcribe_audio", payload["data"]
+                            )
                             headers.update(llm_headers)
 
-                            remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                            remote_analyze_url = (
+                                f"{settings.remote_base_url}/api/v1/analyze"
+                            )
                             response = await http_client.post(
-                                remote_analyze_url,
-                                json=payload,
-                                headers=headers
+                                remote_analyze_url, json=payload, headers=headers
                             )
                             response.raise_for_status()
                             response_data = response.json()
@@ -629,11 +719,13 @@ class TranscriptionSession:
                                 "source": "remote_stt",
                                 "text": response_data.get("text"),
                                 "translated_text": response_data.get("translated_text"),
-                                "is_final": True
+                                "is_final": True,
                             }
 
                             if self.websocket:
-                                await send_and_backup(self.websocket, websocket_msg, self.backup_path)
+                                await send_and_backup(
+                                    self.websocket, websocket_msg, self.backup_path
+                                )
 
                         except (httpx.ConnectError, httpx.TimeoutException) as e:
                             logger.warning(
@@ -645,26 +737,32 @@ class TranscriptionSession:
                             }
                             if self.websocket:
                                 try:
-                                    await self.websocket.send_text(json.dumps(fallback_msg))
+                                    await self.websocket.send_text(
+                                        json.dumps(fallback_msg)
+                                    )
                                 except Exception as ws_err:
                                     logger.error(
                                         f"Failed to send system_warning to websocket: {ws_err}"
                                     )
                         except Exception as e:
                             if is_disconnect_exception(e):
-                                logger.info("Widget disconnesso durante l'invio della trascrizione, arresto del loop.")
+                                logger.info(
+                                    "Widget disconnesso durante l'invio della trascrizione, arresto del loop."
+                                )
                                 self.is_running = False
                                 break
                             logger.error(
                                 f"Errore non gestito durante l'invio della trascrizione: {e}",
-                                exc_info=True
+                                exc_info=True,
                             )
 
         except asyncio.CancelledError:
             logger.info("Microphone capture loop background task cancelled.")
         except Exception as e:
             if is_disconnect_exception(e) or isinstance(e, WebSocketDisconnect):
-                logger.info("Widget disconnesso durante l'ascolto, arresto del loop di cattura.")
+                logger.info(
+                    "Widget disconnesso durante l'ascolto, arresto del loop di cattura."
+                )
             else:
                 logger.error(f"Error in microphone capture loop: {e}")
         finally:
@@ -707,14 +805,18 @@ async def websocket_endpoint(websocket: WebSocket):
     # Create session backup path under daemon/lesson_backups/<timestamp>.jsonl
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     now_clean = now_iso.replace(":", "-")
-    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "lesson_backups"))
+    backup_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "lesson_backups")
+    )
     os.makedirs(backup_dir, exist_ok=True)
     backup_path = os.path.join(backup_dir, f"{now_clean}.jsonl")
 
     # Instantiate per-connection transcription session manager
     transcription_session = TranscriptionSession()
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)) as http_client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)
+    ) as http_client:
         try:
             while True:
                 raw_data = await websocket.receive_text()
@@ -726,8 +828,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     try:
                         resp = await http_client.get(
                             f"{settings.remote_base_url}/health",
-                            headers={"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {},
-                            timeout=2.5
+                            headers=(
+                                {"Authorization": f"Bearer {settings.api_key}"}
+                                if settings.api_key
+                                else {}
+                            ),
+                            timeout=2.5,
                         )
                         if resp.status_code == 200:
                             await websocket.send_text(
@@ -743,9 +849,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- ROUTE LOCALE ---
                 if target == RouteTarget.LOCAL:
                     if action == "sympy_math":
-                        res = LocalEngine.process_math(
-                            payload.get("data", "x^2 - 4")
-                        )
+                        res = LocalEngine.process_math(payload.get("data", "x^2 - 4"))
                         await send_and_backup(websocket, res, backup_path)
                     elif action == "fast_ocr":
                         data_obj = payload.get("data") or {}
@@ -757,34 +861,50 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         try:
                             import tempfile
+
                             with mss() as sct:
-                                monitor = {"top": int(y), "left": int(x), "width": int(width), "height": int(height)}
+                                monitor = {
+                                    "top": int(y),
+                                    "left": int(x),
+                                    "width": int(width),
+                                    "height": int(height),
+                                }
                                 sct_img = sct.grab(monitor)
-                                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                                img = Image.frombytes(
+                                    "RGB", sct_img.size, sct_img.bgra, "raw", "BGRX"
+                                )
 
                                 # Save to a temporary file
-                                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                                with tempfile.NamedTemporaryFile(
+                                    suffix=".png", delete=False
+                                ) as tmp_file:
                                     img.save(tmp_file.name)
 
                             # Perform real OCR on the captured PIL Image using pytesseract
                             response_text = pytesseract.image_to_string(img).strip()
-                            logger.info("Screen capture successfully processed with Tesseract OCR.")
+                            logger.info(
+                                "Screen capture successfully processed with Tesseract OCR."
+                            )
                         except Exception as e:
                             # Note display access limitation explicitly
-                            logger.error(f"Failed to capture screen or perform OCR: {e}. Headless display environment restriction may apply.")
+                            logger.error(
+                                f"Failed to capture screen or perform OCR: {e}. Headless display environment restriction may apply."
+                            )
                             response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {e}]"
 
                         ocr_payload = {
                             "type": "ocr",
                             "source": "local_engine",
-                            "text": response_text
+                            "text": response_text,
                         }
                         await websocket.send_text(json.dumps(ocr_payload))
 
                     elif action == "start_transcription":
                         data_obj = payload.get("data") or {}
                         target_lang = data_obj.get("target_language")
-                        await transcription_session.start(websocket, target_lang, backup_path)
+                        await transcription_session.start(
+                            websocket, target_lang, backup_path
+                        )
 
                     elif action == "stop_transcription":
                         await transcription_session.stop()
@@ -801,7 +921,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "type": "error",
                             "code": "MISSING_CREDENTIALS",
                             "action": action,
-                            "message": e.message
+                            "message": e.message,
                         }
                         await websocket.send_text(json.dumps(err_res))
                         continue
@@ -810,25 +930,35 @@ async def websocket_endpoint(websocket: WebSocket):
                         if action == "load_3d_model":
                             query = payload.get("data", {}).get("query")
                             if query:
-                                res_metadata = await handle_load_3d_model(query, http_client, payload, custom_headers)
-                                await send_and_backup(websocket, res_metadata, backup_path)
+                                res_metadata = await handle_load_3d_model(
+                                    query, http_client, payload, custom_headers
+                                )
+                                await send_and_backup(
+                                    websocket, res_metadata, backup_path
+                                )
                                 continue
 
                         # Construct remote analyze URL dynamically
-                        remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
-                        req_headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
+                        remote_analyze_url = (
+                            f"{settings.remote_base_url}/api/v1/analyze"
+                        )
+                        req_headers = (
+                            {"Authorization": f"Bearer {settings.api_key}"}
+                            if settings.api_key
+                            else {}
+                        )
                         req_headers.update(custom_headers)
 
                         response = await http_client.post(
-                            remote_analyze_url,
-                            json=payload,
-                            headers=req_headers
+                            remote_analyze_url, json=payload, headers=req_headers
                         )
                         response.raise_for_status()
                         await send_and_backup(websocket, response.text, backup_path)
 
                     except (httpx.ConnectError, httpx.TimeoutException):
-                        logger.warning(f"Server remoto irraggiungibile per action: {action}")
+                        logger.warning(
+                            f"Server remoto irraggiungibile per action: {action}"
+                        )
                         fallback_msg = {
                             "type": "system_warning",
                             "message": "Server remoto offline. Passaggio a Modalità Locale.",
@@ -839,9 +969,13 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info("Widget disconnesso.")
         except Exception as e:
             if is_disconnect_exception(e):
-                logger.info("Widget disconnesso (eccezione di disconnessione rilevata nel loop principale).")
+                logger.info(
+                    "Widget disconnesso (eccezione di disconnessione rilevata nel loop principale)."
+                )
             else:
-                logger.error(f"Errore imprevisto nel loop websocket: {e}", exc_info=True)
+                logger.error(
+                    f"Errore imprevisto nel loop websocket: {e}", exc_info=True
+                )
         finally:
             # Clean up the transcription stream on websocket disconnection
             await transcription_session.stop()
