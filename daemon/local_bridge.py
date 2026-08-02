@@ -123,9 +123,24 @@ async def on_startup() -> None:
 # Include the administrative and setup settings endpoints as specified
 app.include_router(settings_router)
 
+from fastapi import Response
+
+class CORSStaticFiles(StaticFiles):
+    """
+    Custom StaticFiles wrapper that appends CORS headers to responses,
+    allowing 3D model assets to be loaded by <model-viewer> inside
+    the widget even when running on a different origin (like file://).
+    """
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
 # Serve local 3D models cache under /models_cache
 os.makedirs("model_cache", exist_ok=True)
-app.mount("/models_cache", StaticFiles(directory="model_cache"), name="models_cache")
+app.mount("/models_cache", CORSStaticFiles(directory="model_cache"), name="models_cache")
 
 
 async def send_and_backup(websocket: WebSocket, message: dict | str, backup_path: str | None) -> None:
