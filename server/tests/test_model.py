@@ -313,3 +313,104 @@ def test_api_load_3d_model_remote_service_error(mock_sketchfab_get: MagicMock) -
     assert data["code"] == "REMOTE_SERVICE_ERROR"
     assert data["action"] == "load_3d_model"
     assert "Impossibile connettersi a Sketchfab" in data["message"]
+
+
+@patch("httpx.Client.get")
+def test_search_relevance_h2o_bug_resolved(mock_get: MagicMock) -> None:
+    """Tests that the h2o bug is resolved by selecting the relevant model and filtering out the irrelevant villa."""
+    # 1. Setup mock search response with an irrelevant first match and a relevant second match
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "villa_uid_999",
+                "name": "Luxury Modern Villa with Pool",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
+                "user": {
+                    "username": "architect",
+                    "displayName": "Architect Pro"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            },
+            {
+                "uid": "h2o_uid_111",
+                "name": "Water Molecule (H2O)",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/h2o_uid_111",
+                "user": {
+                    "username": "science_lab",
+                    "displayName": "Science Lab"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            }
+        ]
+    }
+
+    # 2. Setup mock download link response (for h2o_uid_111)
+    mock_download_resp = MagicMock()
+    mock_download_resp.status_code = 200
+    mock_download_resp.json.return_value = {
+        "gltf": {
+            "url": "https://s3.amazonaws.com/sketchfab/archives/h2o_gltf.zip",
+            "size": 2048,
+            "expires": 300
+        }
+    }
+
+    # 3. Setup mock zip archive response
+    mock_archive_resp = MagicMock()
+    mock_archive_resp.status_code = 200
+    mock_archive_resp.content = create_dummy_zip_bytes()
+
+    # Assign side effects to mock_get
+    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
+
+    # Run the service for query "H2O"
+    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
+
+    # Assert that the genuinely relevant H2O model was selected, not the villa
+    assert metadata["uid"] == "h2o_uid_111"
+    assert metadata["title"] == "Water Molecule (H2O)"
+    assert metadata["model_url"] == "/models/h2o_uid_111/scene.gltf"
+
+    # Verify folder was extracted and scene.gltf cached for the correct UID
+    cached_gltf = os.path.join(CACHE_DIR, "h2o_uid_111", "scene.gltf")
+    assert os.path.exists(cached_gltf)
+    assert not os.path.exists(os.path.join(CACHE_DIR, "villa_uid_999"))
+
+
+@patch("httpx.Client.get")
+def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
+    """Tests that if no result matches both the relevance filter and downloadable/CC filters, we raise a ValueError."""
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "villa_uid_999",
+                "name": "Luxury Modern Villa with Pool",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
+                "user": {
+                    "username": "architect",
+                    "displayName": "Architect Pro"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            }
+        ]
+    }
+    mock_get.return_value = mock_search_resp
+
+    with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
+        search_and_fetch_3d_model("H2O", "test-sketchfab-token")

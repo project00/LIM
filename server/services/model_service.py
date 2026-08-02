@@ -32,6 +32,32 @@ def get_auth_headers(access_token: str) -> dict:
     return {"Authorization": f"Token {token}"}
 
 
+def extract_significant_words(query: str) -> list[str]:
+    """
+    Extracts significant words from the search query.
+    Normalizes to lowercase, splits, and ignores common short stopwords.
+    """
+    stopwords = {
+        "with", "and", "the", "for", "from", "con", "il", "la", "un", "una",
+        "di", "del", "della", "dei", "degli", "da", "in", "su", "per", "tra",
+        "fra", "le", "gli", "i", "a", "o", "e"
+    }
+    # Clean up punctuation slightly
+    cleaned_query = query.replace("'", " ").replace('"', " ").replace("-", " ").replace("_", " ")
+    words = cleaned_query.lower().split()
+
+    significant = [w for w in words if w not in stopwords and len(w) >= 2]
+
+    # If filtering removed all words, fallback to using all non-stop words
+    if not significant:
+        significant = [w for w in words if w not in stopwords]
+    # If still empty, fallback to the entire word list
+    if not significant:
+        significant = words
+
+    return significant
+
+
 def is_cc_licensed(license_data: dict) -> bool:
     """
     Checks if the license is Creative Commons based on slug, name, or key identifiers.
@@ -109,7 +135,10 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         logger.warning("No Sketchfab search results for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
-    # Selection Heuristic: Find first model explicitly marked downloadable and under a CC license
+    significant_words = extract_significant_words(query)
+    logger.info("Significant words for query '%s': %s", query, significant_words)
+
+    # Selection Heuristic: Find first model explicitly marked downloadable, CC-licensed, and matching the name-relevance filter
     selected_model = None
     for model in results:
         # We queried downloadable=true, but verify just in case
@@ -117,14 +146,21 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             continue
 
         license_data = model.get("license") or {}
-        if is_cc_licensed(license_data):
-            selected_model = model
-            break
+        if not is_cc_licensed(license_data):
+            continue
 
-    # If no CC model is found, fall back to the first result to be helpful
+        model_name = model.get("name", "").lower()
+        if not any(word in model_name for word in significant_words):
+            logger.info("Rejecting model '%s' because name does not contain any query significant words: %s", model.get("name"), significant_words)
+            continue
+
+        selected_model = model
+        break
+
+    # If no result passes both relevance filter AND downloadable/CC filter, return MODEL_NOT_FOUND
     if not selected_model:
-        selected_model = results[0]
-        logger.info("No explicit CC-licensed models found; falling back to first downloadable result: '%s'", selected_model.get("name"))
+        logger.warning("No Sketchfab search results passed both the downloadable/CC filter and the name relevance filter for query: '%s'", query)
+        raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
     uid = selected_model.get("uid")
     name = selected_model.get("name", "Modello 3D")
