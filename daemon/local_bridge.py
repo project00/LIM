@@ -913,16 +913,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
                                 buffered = io.BytesIO()
                                 img.save(buffered, format="PNG")
-                                image_base64 = base64.b64encode(buffered.getvalue()).decode(
-                                    "utf-8"
-                                )
+                                image_base64 = base64.b64encode(
+                                    buffered.getvalue()
+                                ).decode("utf-8")
 
                                 ocr_vision_payload = {
                                     "action": "ocr_vision",
                                     "data": {"image_base64": image_base64},
                                 }
 
-                                remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
+                                remote_analyze_url = (
+                                    f"{settings.remote_base_url}/api/v1/analyze"
+                                )
                                 req_headers = (
                                     {"Authorization": f"Bearer {settings.api_key}"}
                                     if settings.api_key
@@ -961,7 +963,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         if response_text is None:
                             if img is not None:
                                 try:
-                                    response_text = pytesseract.image_to_string(img).strip()
+                                    response_text = pytesseract.image_to_string(
+                                        img
+                                    ).strip()
                                     logger.info(
                                         "Screen capture successfully processed with Tesseract OCR (fallback/default)."
                                     )
