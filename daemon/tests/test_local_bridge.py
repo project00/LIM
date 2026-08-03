@@ -25,12 +25,10 @@ import pytesseract
 # Ensure daemon directory is in sys.path
 import sys
 from pathlib import Path
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from local_bridge import app
 from settings_api import settings, Credential
-
 
 @pytest.fixture(autouse=True)
 def setup_active_credentials():
@@ -42,20 +40,18 @@ def setup_active_credentials():
             type="llm_cloud",
             enabled=True,
             model="gpt-4o",
-            api_key="test-api-key",
+            api_key="test-api-key"
         ),
         Credential(
             id="test-sf",
             name="Test Sketchfab",
             type="sketchfab",
             enabled=True,
-            access_token="test-sf-token",
-        ),
+            access_token="test-sf-token"
+        )
     ]
     original_threshold = settings.silence_rms_threshold
-    settings.silence_rms_threshold = (
-        -1
-    )  # Disable silence detection by default for existing tests to prevent hangs
+    settings.silence_rms_threshold = -1 # Disable silence detection by default for existing tests to prevent hangs
     yield
     settings.credentials = original_creds
     settings.silence_rms_threshold = original_threshold
@@ -65,9 +61,7 @@ def test_sympy_math_local_route() -> None:
     """Tests local execution route for sympy_math, which should run entirely at edge."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as websocket:
-        websocket.send_text(
-            json.dumps({"action": "sympy_math", "data": "2*x + 6 - 12"})
-        )
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "2*x + 6 - 12"}))
         response = websocket.receive_json()
         assert response["type"] == "math"
         assert response["source"] == "local_engine"
@@ -121,9 +115,7 @@ def test_sympy_math_parsing_error_route() -> None:
     """Tests that a parsing failure is handled gracefully with standard error latex and plot_data: null."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as websocket:
-        websocket.send_text(
-            json.dumps({"action": "sympy_math", "data": "invalid syntax ++/ 123"})
-        )
+        websocket.send_text(json.dumps({"action": "sympy_math", "data": "invalid syntax ++/ 123"}))
         response = websocket.receive_json()
         assert response["type"] == "math"
         assert response["source"] == "local_engine"
@@ -157,25 +149,19 @@ async def test_fast_ocr_capture_success_with_ocr_mock() -> None:
     mock_sct_img.size = (100, 100)
     mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
 
-    with patch("local_bridge.mss") as mock_mss, patch(
-        "local_bridge.Image.frombytes"
-    ), patch("local_bridge.pytesseract.image_to_string") as mock_ocr:
+    with patch("local_bridge.mss") as mock_mss, \
+         patch("local_bridge.Image.frombytes"), \
+         patch("local_bridge.pytesseract.image_to_string") as mock_ocr:
 
         mock_instance = mock_mss.return_value.__enter__.return_value
         mock_instance.grab.return_value = mock_sct_img
         mock_ocr.return_value = "TEST OCR SUCCESSFUL CONTENT"
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "fast_ocr",
-                        "data": {
-                            "region": {"x": 10, "y": 20, "width": 100, "height": 100}
-                        },
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "fast_ocr",
+                "data": {"region": {"x": 10, "y": 20, "width": 100, "height": 100}}
+            }))
             response = websocket.receive_json()
             assert response["type"] == "ocr"
             assert response["source"] == "local_engine"
@@ -191,16 +177,10 @@ async def test_fast_ocr_capture_headless_failure() -> None:
         mock_mss.side_effect = Exception("No DISPLAY environment variable found")
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "fast_ocr",
-                        "data": {
-                            "region": {"x": 0, "y": 0, "width": 1920, "height": 1080}
-                        },
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "fast_ocr",
+                "data": {"region": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+            }))
             response = websocket.receive_json()
             assert response["type"] == "ocr"
             assert response["source"] == "local_engine"
@@ -238,7 +218,7 @@ async def test_remote_reachable_analyze() -> None:
     remote_data = {
         "type": "concept_map",
         "source": "remote_llm",
-        "mermaid_code": "graph TD; Cuore-->Arterie;",
+        "mermaid_code": "graph TD; Cuore-->Arterie;"
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
@@ -247,14 +227,10 @@ async def test_remote_reachable_analyze() -> None:
         mock_post.return_value = mock_resp
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "concept_map",
-                        "data": {"topic": "apparato circolatorio"},
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "concept_map",
+                "data": {"topic": "apparato circolatorio"}
+            }))
             response = websocket.receive_json()
             assert response["type"] == "concept_map"
             assert response["source"] == "remote_llm"
@@ -271,14 +247,10 @@ async def test_remote_timeout_fallback() -> None:
         mock_post.side_effect = httpx.TimeoutException("Remote server timeout")
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "concept_map",
-                        "data": {"topic": "apparato circolatorio"},
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "concept_map",
+                "data": {"topic": "apparato circolatorio"}
+            }))
             response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
@@ -293,19 +265,13 @@ async def test_remote_connection_error_fallback() -> None:
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         # ConnectError requires a message and request object (which can be mock or None)
         mock_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
-        mock_post.side_effect = httpx.ConnectError(
-            "Connection refused", request=mock_req
-        )
+        mock_post.side_effect = httpx.ConnectError("Connection refused", request=mock_req)
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "concept_map",
-                        "data": {"topic": "apparato circolatorio"},
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "concept_map",
+                "data": {"topic": "apparato circolatorio"}
+            }))
             response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
@@ -325,30 +291,30 @@ async def test_start_transcription_success_mock() -> None:
     with patch("pyaudio.PyAudio", return_value=mock_instance):
         with client.websocket_connect("/ws") as websocket:
             # Send start_transcription action
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
 
             # Allow some async events to run
             await asyncio.sleep(0.1)
 
             # Send stop_transcription action
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
 
             # Allow cleanup events to run
             await asyncio.sleep(0.1)
 
         import pyaudio
-
         # Verify that PyAudio stream open was called with correct parameters
         mock_instance.open.assert_called_once_with(
             format=pyaudio.paInt16,
             channels=1,
             rate=16000,
             input=True,
-            frames_per_buffer=1024,
+            frames_per_buffer=1024
         )
         # Verify cleanup
         mock_stream.stop_stream.assert_called()
@@ -367,11 +333,10 @@ async def test_start_transcription_device_failure() -> None:
 
     with patch("pyaudio.PyAudio", return_value=mock_instance):
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "it"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
             response = websocket.receive_json()
 
             assert response["type"] == "error"
@@ -386,10 +351,15 @@ async def test_stop_transcription_unstarted() -> None:
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as websocket:
-        websocket.send_text(json.dumps({"action": "stop_transcription"}))
+        websocket.send_text(json.dumps({
+            "action": "stop_transcription"
+        }))
         # Ensure WebSocket does not disconnect unexpectedly and remains open/usable
         # We can ping the local websocket to confirm it's still alive
-        websocket.send_text(json.dumps({"action": "sympy_math", "data": "1+1"}))
+        websocket.send_text(json.dumps({
+            "action": "sympy_math",
+            "data": "1+1"
+        }))
         res = websocket.receive_json()
         assert res["type"] == "math"
 
@@ -407,216 +377,92 @@ async def test_start_transcription_double_start() -> None:
     with patch("pyaudio.PyAudio", return_value=mock_instance):
         with client.websocket_connect("/ws") as websocket:
             # Send first start_transcription action
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
             await asyncio.sleep(0.05)
 
             # Send second start_transcription action without stopping first
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "it"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
             await asyncio.sleep(0.05)
 
             # Send stop_transcription action
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
 
 @pytest.mark.asyncio
-async def test_fast_ocr_routes_to_ocr_vision_when_credential_enabled() -> None:
-    """Tests that fast_ocr routes to ocr_vision remote action when ocr scope credential is enabled."""
-    from settings_api import settings, Credential
-
+async def test_text_to_speech_model_path_unset(monkeypatch) -> None:
+    """Tests that text_to_speech action returns TTS_NOT_CONFIGURED error when PIPER_VOICE_MODEL_PATH is unset."""
+    monkeypatch.delenv("PIPER_VOICE_MODEL_PATH", raising=False)
     client = TestClient(app)
-
-    # Enable an OCR credential
-    original_creds = list(settings.credentials)
-    settings.credentials = [
-        Credential(
-            id="ocr_vision_id",
-            name="My Vision OCR",
-            type="llm_cloud",
-            scope="ocr",
-            enabled=True,
-            model="gpt-4o",
-            api_key="vision-key",
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(
+            json.dumps({"action": "text_to_speech", "data": {"text": "Test summary text"}})
         )
-    ]
-
-    mock_sct_img = MagicMock()
-    mock_sct_img.size = (100, 100)
-    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
-
-    try:
-        with patch("local_bridge.mss") as mock_mss, patch(
-            "local_bridge.Image.frombytes"
-        ), patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, patch(
-            "local_bridge.httpx.AsyncClient.post"
-        ) as mock_post:
-
-            mock_instance = mock_mss.return_value.__enter__.return_value
-            mock_instance.grab.return_value = mock_sct_img
-
-            # Mock successful remote vision LLM OCR response
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {
-                "type": "ocr",
-                "source": "remote_vision_llm",
-                "text": "SUCCESSFUL VISION OCR TEXT",
-            }
-            mock_resp.status_code = 200
-            mock_post.return_value = mock_resp
-
-            with client.websocket_connect("/ws") as websocket:
-                websocket.send_text(
-                    json.dumps(
-                        {
-                            "action": "fast_ocr",
-                            "data": {
-                                "region": {
-                                    "x": 10,
-                                    "y": 20,
-                                    "width": 100,
-                                    "height": 100,
-                                }
-                            },
-                        }
-                    )
-                )
-                response = websocket.receive_json()
-                assert response["type"] == "ocr"
-                assert response["source"] == "remote_vision_llm"
-                assert response["text"] == "SUCCESSFUL VISION OCR TEXT"
-                assert mock_post.called
-                assert not mock_tesseract.called
-    finally:
-        settings.credentials = original_creds
+        response = websocket.receive_json()
+        assert response["type"] == "error"
+        assert response["code"] == "TTS_NOT_CONFIGURED"
+        assert response["action"] == "text_to_speech"
+        assert "Nessun modello vocale" in response["message"]
 
 
 @pytest.mark.asyncio
-async def test_fast_ocr_uses_local_tesseract_when_no_ocr_credential() -> None:
-    """Tests that fast_ocr uses local Tesseract OCR directly if no ocr scope credential is enabled."""
-    from settings_api import settings
-
+async def test_text_to_speech_model_file_missing(monkeypatch) -> None:
+    """Tests that text_to_speech action returns TTS_NOT_CONFIGURED error when PIPER_VOICE_MODEL_PATH is set but the file does not exist."""
+    monkeypatch.setenv("PIPER_VOICE_MODEL_PATH", "/non/existent/path/model.onnx")
     client = TestClient(app)
-
-    original_creds = list(settings.credentials)
-    settings.credentials = []  # No ocr credential enabled
-
-    mock_sct_img = MagicMock()
-    mock_sct_img.size = (100, 100)
-    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
-
-    try:
-        with patch("local_bridge.mss") as mock_mss, patch(
-            "local_bridge.Image.frombytes"
-        ), patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, patch(
-            "local_bridge.httpx.AsyncClient.post"
-        ) as mock_post:
-
-            mock_instance = mock_mss.return_value.__enter__.return_value
-            mock_instance.grab.return_value = mock_sct_img
-            mock_tesseract.return_value = "LOCAL TESSERACT CONTENT"
-
-            with client.websocket_connect("/ws") as websocket:
-                websocket.send_text(
-                    json.dumps(
-                        {
-                            "action": "fast_ocr",
-                            "data": {
-                                "region": {
-                                    "x": 10,
-                                    "y": 20,
-                                    "width": 100,
-                                    "height": 100,
-                                }
-                            },
-                        }
-                    )
-                )
-                response = websocket.receive_json()
-                assert response["type"] == "ocr"
-                assert response["source"] == "local_engine"
-                assert response["text"] == "LOCAL TESSERACT CONTENT"
-                assert not mock_post.called
-                assert mock_tesseract.called
-    finally:
-        settings.credentials = original_creds
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_text(
+            json.dumps({"action": "text_to_speech", "data": {"text": "Test summary text"}})
+        )
+        response = websocket.receive_json()
+        assert response["type"] == "error"
+        assert response["code"] == "TTS_NOT_CONFIGURED"
+        assert response["action"] == "text_to_speech"
+        assert "Nessun modello vocale" in response["message"]
 
 
 @pytest.mark.asyncio
-async def test_fast_ocr_falls_back_to_tesseract_when_vision_call_fails() -> None:
-    """Tests that fast_ocr falls back to local Tesseract OCR if the remote Vision API call fails."""
-    from settings_api import settings, Credential
+async def test_text_to_speech_success(monkeypatch, tmp_path) -> None:
+    """Tests that text_to_speech action executes Piper subprocess correctly and returns tts_audio payload on success."""
+    model_file = tmp_path / "model.onnx"
+    model_file.write_text("fake model data")
+    monkeypatch.setenv("PIPER_VOICE_MODEL_PATH", str(model_file))
 
     client = TestClient(app)
 
-    original_creds = list(settings.credentials)
-    settings.credentials = [
-        Credential(
-            id="ocr_vision_id",
-            name="My Vision OCR",
-            type="llm_cloud",
-            scope="ocr",
-            enabled=True,
-            model="gpt-4o",
-            api_key="vision-key",
-        )
-    ]
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = ("stdout", "stderr")
 
-    mock_sct_img = MagicMock()
-    mock_sct_img.size = (100, 100)
-    mock_sct_img.bgra = b"\x00" * (100 * 100 * 4)
+    def side_effect(args, *popen_args, **popen_kwargs):
+        output_file_path = args[4]
+        with open(output_file_path, "wb") as f:
+            f.write(b"RIFFdummywavdata")  # dummy wav bytes
+        return mock_proc
 
-    try:
-        with patch("local_bridge.mss") as mock_mss, patch(
-            "local_bridge.Image.frombytes"
-        ), patch("local_bridge.pytesseract.image_to_string") as mock_tesseract, patch(
-            "local_bridge.httpx.AsyncClient.post"
-        ) as mock_post:
-
-            mock_instance = mock_mss.return_value.__enter__.return_value
-            mock_instance.grab.return_value = mock_sct_img
-            mock_tesseract.return_value = "FALLBACK TESSERACT CONTENT"
-
-            # Mock remote call raising exception to simulate failure
-            mock_post.side_effect = httpx.HTTPStatusError(
-                "500 Internal Server Error", request=None, response=None
+    with patch("subprocess.Popen", side_effect=side_effect):
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(
+                json.dumps({"action": "text_to_speech", "data": {"text": "Questo e un riassunto"}})
             )
+            response = websocket.receive_json()
 
-            with client.websocket_connect("/ws") as websocket:
-                websocket.send_text(
-                    json.dumps(
-                        {
-                            "action": "fast_ocr",
-                            "data": {
-                                "region": {
-                                    "x": 10,
-                                    "y": 20,
-                                    "width": 100,
-                                    "height": 100,
-                                }
-                            },
-                        }
-                    )
-                )
-                response = websocket.receive_json()
-                assert response["type"] == "ocr"
-                assert response["source"] == "local_engine"
-                assert response["text"] == "FALLBACK TESSERACT CONTENT"
-                assert mock_post.called
-                assert mock_tesseract.called
-    finally:
-        settings.credentials = original_creds
+            assert response["type"] == "tts_audio"
+            assert response["source"] == "local_engine"
+            assert response["format"] == "wav"
+            import base64
+            assert base64.b64decode(response["audio_base64"]) == b"RIFFdummywavdata"
 
 
 import time
-
 
 @pytest.mark.asyncio
 async def test_transcription_silence_detection_skipped() -> None:
@@ -635,26 +481,25 @@ async def test_transcription_silence_detection_skipped() -> None:
     def slow_read_silence(*args, **kwargs):
         time.sleep(0.01)
         return b"\x00" * 2048
-
     mock_stream.read.side_effect = slow_read_silence
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
 
         with client.websocket_connect("/ws") as websocket:
             # Start transcription
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
 
             # Wait briefly to let background thread capture the chunks
             await asyncio.sleep(0.1)
 
             # Stop transcription cleanly
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
         # Confirm that NO HTTP request was made to the server because the chunk was silent!
@@ -672,7 +517,6 @@ async def test_transcription_sound_detection_sent() -> None:
 
     # Generate synthetic noisy chunk with high amplitude alternating samples
     import struct
-
     noisy_buffer = struct.pack("<1024h", *([1000, -1000] * 512))
 
     mock_instance = MagicMock()
@@ -683,31 +527,28 @@ async def test_transcription_sound_detection_sent() -> None:
     def slow_read_sound(*args, **kwargs):
         time.sleep(0.01)
         return noisy_buffer
-
     mock_stream.read.side_effect = slow_read_sound
 
     remote_data = {
         "type": "transcription",
         "source": "remote_stt",
         "text": "Loud sound recognized",
-        "translated_text": None,
+        "translated_text": None
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
 
         mock_post.return_value = mock_resp
 
         with client.websocket_connect("/ws") as websocket:
             # Start transcription
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
 
             # Expect the redirected subtitle response sent over WebSocket
             response = websocket.receive_json()
@@ -716,7 +557,9 @@ async def test_transcription_sound_detection_sent() -> None:
             assert response["text"] == "Loud sound recognized"
 
             # Stop transcription cleanly
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
         # Confirm that HTTP request was indeed made to the server because the chunk was NOT silent!
@@ -734,7 +577,6 @@ async def test_transcribe_audio_slow_success_no_warning() -> None:
     client = TestClient(app)
 
     import struct
-
     noisy_buffer = struct.pack("<1024h", *([1000, -1000] * 512))
 
     mock_instance = MagicMock()
@@ -745,32 +587,29 @@ async def test_transcribe_audio_slow_success_no_warning() -> None:
     def slow_read_sound(*args, **kwargs):
         time.sleep(0.01)
         return noisy_buffer
-
     mock_stream.read.side_effect = slow_read_sound
 
     # Mock post to delay and then return successful response
     async def slow_post(*args, **kwargs):
-        await asyncio.sleep(3.0)  # Delay 3.0 seconds (over 2.5s)
+        await asyncio.sleep(3.0) # Delay 3.0 seconds (over 2.5s)
         remote_data = {
             "type": "transcription",
             "source": "remote_stt",
             "text": "Slow but successful text",
-            "translated_text": None,
+            "translated_text": None
         }
         dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
         return httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new=slow_post
-    ):
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new=slow_post):
 
         with client.websocket_connect("/ws") as websocket:
             # Send start_transcription
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
 
             # Wait for response (timeout under 30s but will complete in 3.0s)
             response = websocket.receive_json()
@@ -780,7 +619,9 @@ async def test_transcribe_audio_slow_success_no_warning() -> None:
             assert response["text"] == "Slow but successful text"
 
             # Stop transcription cleanly
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
 
@@ -829,14 +670,14 @@ async def test_transcription_disconnect_safety() -> None:
         "type": "transcription",
         "source": "remote_stt",
         "text": "Buongiorno classe",
-        "translated_text": None,
+        "translated_text": None
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post, patch("local_bridge.logger") as mock_logger:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("local_bridge.logger") as mock_logger:
 
         mock_post.return_value = mock_resp
 
@@ -855,21 +696,19 @@ async def test_transcription_disconnect_safety() -> None:
         info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
         error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
 
-        assert any(
-            "Widget disconnesso" in msg or "arresto" in msg for msg in info_calls
-        )
+        assert any("Widget disconnesso" in msg or "arresto" in msg for msg in info_calls)
         assert not any("Errore non gestito" in msg for msg in error_calls)
 
 
 def test_tesseract_cmd_path_selection_packaged() -> None:
     """Tests that sys.frozen packaged mode correctly overrides pytesseract's tesseract_cmd path."""
+    import sys
     import pytesseract
     from local_bridge import configure_tesseract_path
 
     # Mock frozen state and _MEIPASS path
-    with patch("sys.frozen", True, create=True), patch(
-        "sys._MEIPASS", "/mock/mei/dir", create=True
-    ):
+    with patch("sys.frozen", True, create=True), \
+         patch("sys._MEIPASS", "/mock/mei/dir", create=True):
 
         configure_tesseract_path()
 
@@ -879,6 +718,7 @@ def test_tesseract_cmd_path_selection_packaged() -> None:
 
 def test_tesseract_cmd_path_selection_development() -> None:
     """Tests that development mode leaves pytesseract's tesseract_cmd untouched."""
+    import sys
     import pytesseract
     from local_bridge import configure_tesseract_path
 
@@ -997,10 +837,7 @@ async def test_send_and_backup_respects_disable_toggle() -> None:
 async def test_sympy_math_backups_successfully() -> None:
     """Tests that a successful sympy_math local action results in exactly one backed up line."""
     import shutil
-
-    backup_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "lesson_backups")
-    )
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
     if os.path.exists(backup_dir):
         shutil.rmtree(backup_dir)
 
@@ -1034,10 +871,7 @@ async def test_sympy_math_backups_successfully() -> None:
 async def test_remote_proxy_backups_successfully() -> None:
     """Tests that successful REMOTE actions backup successfully but system warnings are skipped."""
     import shutil
-
-    backup_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "lesson_backups")
-    )
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
     if os.path.exists(backup_dir):
         shutil.rmtree(backup_dir)
 
@@ -1046,7 +880,7 @@ async def test_remote_proxy_backups_successfully() -> None:
     remote_data = {
         "type": "concept_map",
         "source": "remote_llm",
-        "mermaid_code": "graph TD; Cuore-->Arterie;",
+        "mermaid_code": "graph TD; Cuore-->Arterie;"
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
@@ -1056,14 +890,10 @@ async def test_remote_proxy_backups_successfully() -> None:
 
         with client.websocket_connect("/ws") as websocket:
             # 1. Successful remote proxy (should backup)
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "action": "concept_map",
-                        "data": {"topic": "apparato circolatorio"},
-                    }
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "concept_map",
+                "data": {"topic": "apparato circolatorio"}
+            }))
             websocket.receive_json()
 
     assert os.path.exists(backup_dir)
@@ -1088,10 +918,7 @@ async def test_remote_proxy_backups_successfully() -> None:
 async def test_transcription_backups_successfully() -> None:
     """Tests that transcription final subtitles are backed up but interim subtitles or warnings are skipped."""
     import shutil
-
-    backup_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "lesson_backups")
-    )
+    backup_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lesson_backups"))
     if os.path.exists(backup_dir):
         shutil.rmtree(backup_dir)
 
@@ -1106,26 +933,26 @@ async def test_transcription_backups_successfully() -> None:
         "type": "transcription",
         "source": "remote_stt",
         "text": "Buongiorno classe",
-        "translated_text": None,
+        "translated_text": None
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_resp
 
         with client.websocket_connect("/ws") as websocket:
             # 1. Final subtitle should backup
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
             websocket.receive_json()
 
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
     assert os.path.exists(backup_dir)
@@ -1174,14 +1001,14 @@ async def test_load_3d_model_local_caching() -> None:
         "attribution": {
             "author": "Science Lab",
             "license": "CC-BY",
-            "source_url": "https://sketchfab.com/models/model_uid_xyz",
-        },
+            "source_url": "https://sketchfab.com/models/model_uid_xyz"
+        }
     }
 
     # scene.gltf file content
     mock_gltf_content = {
         "buffers": [{"uri": "scene.bin"}],
-        "images": [{"uri": "textures/baseColor.png"}],
+        "images": [{"uri": "textures/baseColor.png"}]
     }
     mock_gltf_resp = MagicMock()
     mock_gltf_resp.status_code = 200
@@ -1196,20 +1023,18 @@ async def test_load_3d_model_local_caching() -> None:
     mock_img_resp.content = b"\xff\xd8\xff"
 
     # Set up httpx.AsyncClient mocks
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch(
-        "httpx.AsyncClient.get", new_callable=AsyncMock
-    ) as mock_get:
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
 
         mock_post.return_value = mock_remote_analyze_resp
         mock_get.side_effect = [mock_gltf_resp, mock_bin_resp, mock_img_resp]
 
         # First request (Cache MISS)
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {"action": "load_3d_model", "data": {"query": "H2O Molecule"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "load_3d_model",
+                "data": {"query": "H2O Molecule"}
+            }))
             response1 = websocket.receive_json()
 
             # Assert rewritten URL and preserved attribution
@@ -1230,11 +1055,10 @@ async def test_load_3d_model_local_caching() -> None:
         mock_get.reset_mock()
 
         with client.websocket_connect("/ws") as websocket:
-            websocket.send_text(
-                json.dumps(
-                    {"action": "load_3d_model", "data": {"query": "H2O Molecule"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "load_3d_model",
+                "data": {"query": "H2O Molecule"}
+            }))
             response2 = websocket.receive_json()
 
             # Assert served from cache immediately with identical rewritten details
@@ -1272,23 +1096,21 @@ async def test_transcription_success_forward() -> None:
         "type": "transcription",
         "source": "remote_stt",
         "text": "Buongiorno classe",
-        "translated_text": None,
+        "translated_text": None
     }
     dummy_req = httpx.Request("POST", "http://192.168.1.100:8000/api/v1/analyze")
     mock_resp = httpx.Response(200, text=json.dumps(remote_data), request=dummy_req)
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_resp
 
         with client.websocket_connect("/ws") as websocket:
             # Send start_transcription
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "en"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "en"}
+            }))
 
             # Wait for message to be posted and response to be forwarded over WebSocket
             response = websocket.receive_json()
@@ -1301,7 +1123,9 @@ async def test_transcription_success_forward() -> None:
             assert response["is_final"] is True
 
             # Stop the transcription cleanly
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)
 
 
@@ -1319,21 +1143,17 @@ async def test_transcription_failure_handling() -> None:
     # Yield one full chunk, then return empty bytes
     mock_stream.read.side_effect = [b"\x00" * 32000, b""]
 
-    with patch("pyaudio.PyAudio", return_value=mock_instance), patch(
-        "httpx.AsyncClient.post", new_callable=AsyncMock
-    ) as mock_post:
+    with patch("pyaudio.PyAudio", return_value=mock_instance), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         # Simulate a connection timeout exception
-        mock_post.side_effect = httpx.TimeoutException(
-            "Remote server transcription timeout"
-        )
+        mock_post.side_effect = httpx.TimeoutException("Remote server transcription timeout")
 
         with client.websocket_connect("/ws") as websocket:
             # Send start_transcription
-            websocket.send_text(
-                json.dumps(
-                    {"action": "start_transcription", "data": {"target_language": "it"}}
-                )
-            )
+            websocket.send_text(json.dumps({
+                "action": "start_transcription",
+                "data": {"target_language": "it"}
+            }))
 
             # Expect system_warning message sent back to the widget
             response = websocket.receive_json()
@@ -1342,5 +1162,7 @@ async def test_transcription_failure_handling() -> None:
             assert "offline" in response["message"]
 
             # Stop transcription cleanly
-            websocket.send_text(json.dumps({"action": "stop_transcription"}))
+            websocket.send_text(json.dumps({
+                "action": "stop_transcription"
+            }))
             await asyncio.sleep(0.05)

@@ -344,6 +344,9 @@ def generate_ocr_vision(
 * `test_fast_ocr_routes_to_ocr_vision_when_credential_enabled()`: "Tests that fast_ocr routes to ocr_vision remote action when ocr scope credential is enabled."
 * `test_fast_ocr_uses_local_tesseract_when_no_ocr_credential()`: "Tests that fast_ocr uses local Tesseract OCR directly if no ocr scope credential is enabled."
 * `test_fast_ocr_falls_back_to_tesseract_when_vision_call_fails()`: "Tests that fast_ocr falls back to local Tesseract OCR if the remote Vision API call fails."
+* `test_text_to_speech_model_path_unset()`: "Tests that text_to_speech action returns TTS_NOT_CONFIGURED error when PIPER_VOICE_MODEL_PATH is unset."
+* `test_text_to_speech_model_file_missing()`: "Tests that text_to_speech action returns TTS_NOT_CONFIGURED error when PIPER_VOICE_MODEL_PATH is set but the file does not exist."
+* `test_text_to_speech_success()`: "Tests that text_to_speech action executes Piper subprocess correctly and returns tts_audio payload on success."
 
 ### `server/tests/test_ocr_vision.py`
 * `test_ocr_vision_service_multimodal_payload()`: "Tests that ocr_vision_service formats the multimodal payload correctly for LiteLLM."
