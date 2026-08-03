@@ -1,7 +1,6 @@
 # Task 46-48 Verification Audit
 
-## 1. Full Literal Credential Pydantic Model (daemon/settings_api.py)
-
+## 1. Credential Pydantic Model (with scope field)
 ```python
 class Credential(BaseModel):
     """Pydantic model representing LLM or Sketchfab provider credentials."""
@@ -19,10 +18,7 @@ class Credential(BaseModel):
     access_token: str | None = None
 ```
 
----
-
-## 2. Full Literal Body of enforce_mutual_exclusivity() (daemon/settings_api.py)
-
+## 2. Full body of enforce_mutual_exclusivity()
 ```python
 def enforce_mutual_exclusivity(active_cred: Credential) -> None:
     # Resolve type group
@@ -40,13 +36,7 @@ def enforce_mutual_exclusivity(active_cred: Credential) -> None:
             c.enabled = False
 ```
 
----
-
-## 3. Full Literal Body of get_outgoing_headers() and attach_active_credentials() (daemon/local_bridge.py)
-
-These functions implement the scope-then-global fallback lookup logic utilizing `get_active_llm_credential(action)`:
-
-### get_active_llm_credential(action)
+## 3. Full body of get_outgoing_headers() and attach_active_credentials()
 ```python
 def get_active_llm_credential(action: str | None) -> Credential | None:
     """Resolves active LLM credential based on action scope with fallback to global."""
@@ -81,10 +71,8 @@ def get_active_llm_credential(action: str | None) -> Credential | None:
                 return c
 
     return None
-```
 
-### get_outgoing_headers(action, payload_data)
-```python
+
 def get_outgoing_headers(action: str, payload_data: dict) -> dict:
     headers = {}
 
@@ -129,10 +117,8 @@ def get_outgoing_headers(action: str, payload_data: dict) -> dict:
             )
 
     return headers
-```
 
-### attach_active_credentials(payload)
-```python
+
 def attach_active_credentials(payload: dict) -> None:
     """Helper to attach active LLM and Sketchfab credentials from settings into the request payload."""
     action = payload.get("action")
@@ -156,11 +142,7 @@ def attach_active_credentials(payload: dict) -> None:
         payload["credentials"] = daemon_credentials
 ```
 
----
-
-## 4. Full Literal HTML/JS for "Ambito" Scope Selector (daemon/setup.html)
-
-### HTML Drodown Definition
+## 4. Full literal HTML/JS for "Ambito" scope selector added to daemon/setup.html
 ```html
     <div id="fields-scope" style="display: block;">
       <label>Ambito
@@ -175,7 +157,6 @@ def attach_active_credentials(payload: dict) -> None:
     </div>
 ```
 
-### JS Submission Logic Including Chosen Scope in POST Body
 ```javascript
 // Handler for adding a new credential
 document.getElementById("add-cred-btn").onclick = async () => {
@@ -225,153 +206,4 @@ document.getElementById("add-cred-btn").onclick = async () => {
     showResult(false, `Errore durante il salvataggio: ${err}`);
   }
 };
-```
-
----
-
-## 5. Task 48 (Vision-LLM OCR): Research Finding, Message Construction Code & Fallback to Tesseract
-
-### Research Finding for LiteLLM Multimodal Image Format
-- **Finding**: LiteLLM supports standard OpenAI API compatible message payloads for multimodal vision completions. The messages list should contain user role with content blocks composed of multiple objects representing types `"text"` and `"image_url"`. The image URL specifies base64 encoded data with a `data:image/png;base64,` or similar data URI format.
-- **Reference**: LiteLLM Multimodal Models documentation (https://docs.litellm.ai/docs/providers/openai#multimodal-gpt-4-vision-gpt-4o).
-
-### Literal Code in server/services/ocr_vision_service.py that Builds Message
-```python
-def generate_ocr_vision(
-    image_base64: str, llm_model: str, llm_api_key: str | None, llm_api_base: str | None
-) -> str:
-    """
-    Performs OCR on the provided base64-encoded image using a vision LLM.
-
-    Args:
-        image_base64: The base64-encoded image data.
-        llm_model: The vision LLM model to use (e.g. gpt-4o).
-        llm_api_key: Optional API key.
-        llm_api_base: Optional API base.
-
-    Returns:
-        The transcribed text.
-    """
-    logger.info("Performing remote Vision-LLM OCR using model '%s'", llm_model)
-
-    # Ensure correct data URI prefix for base64 image URL
-    if not image_base64.startswith("data:"):
-        image_url = f"data:image/png;base64,{image_base64}"
-    else:
-        image_url = image_base64
-
-    prompt_text = (
-        "trascrivi fedelmente il testo scritto in questa immagine, nient'altro"
-    )
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ],
-        }
-    ]
-
-    completion_args = {"model": llm_model, "messages": messages}
-    if llm_api_key:
-        completion_args["api_key"] = llm_api_key
-    if llm_api_base:
-        completion_args["api_base"] = llm_api_base
-
-    try:
-        response = litellm.completion(**completion_args)
-        content = response.choices[0].message.content or ""
-        return content.strip()
-    except Exception as e:
-        logger.error("Vision-LLM OCR completion call failed: %s", e, exc_info=True)
-        raise e
-```
-
-### Fallback-to-Tesseract code in daemon/local_bridge.py
-```python
-                        # 1. OCR Vision Dynamic Routing Exception:
-                        # Check for an enabled credential with scope=="ocr". If found, send the image
-                        # (base64) to the server action "ocr_vision" instead of running local Tesseract.
-                        # If NOT found, or if the vision call fails, fall back to local Tesseract OCR.
-                        active_ocr_cred = get_active_llm_credential("fast_ocr")
-                        response_text = None
-                        source_engine = "local_engine"
-
-                        if capture_error is not None:
-                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {capture_error}]"
-                        elif active_ocr_cred and img is not None:
-                            logger.info(
-                                "Enabled 'ocr' scope credential found. Attempting remote Vision-LLM OCR..."
-                            )
-                            try:
-                                import io
-                                import base64
-
-                                buffered = io.BytesIO()
-                                img.save(buffered, format="PNG")
-                                image_base64 = base64.b64encode(
-                                    buffered.getvalue()
-                                ).decode("utf-8")
-
-                                ocr_vision_payload = {
-                                    "action": "ocr_vision",
-                                    "data": {"image_base64": image_base64},
-                                }
-
-                                remote_analyze_url = (
-                                    f"{settings.remote_base_url}/api/v1/analyze"
-                                )
-                                req_headers = (
-                                    {"Authorization": f"Bearer {settings.api_key}"}
-                                    if settings.api_key
-                                    else {}
-                                )
-                                custom_headers = get_outgoing_headers("ocr_vision", {})
-                                req_headers.update(custom_headers)
-
-                                response = await http_client.post(
-                                    remote_analyze_url,
-                                    json=ocr_vision_payload,
-                                    headers=req_headers,
-                                )
-                                response.raise_for_status()
-                                response_json = response.json()
-
-                                if response_json.get("type") == "error":
-                                    logger.warning(
-                                        "Remote Vision OCR returned error response: %s. Falling back to Tesseract.",
-                                        response_json.get("message"),
-                                    )
-                                else:
-                                    response_text = response_json.get("text")
-                                    source_engine = "remote_vision_llm"
-                                    logger.info(
-                                        "Successfully completed remote Vision-LLM OCR."
-                                    )
-                            except Exception as ve:
-                                logger.error(
-                                    "Remote Vision OCR call failed due to: %s. Falling back to Tesseract.",
-                                    ve,
-                                    exc_info=True,
-                                )
-
-                        # Fallback to local Tesseract if remote Vision OCR was not used or failed
-                        if response_text is None:
-                            if img is not None:
-                                try:
-                                    response_text = pytesseract.image_to_string(
-                                        img
-                                    ).strip()
-                                    logger.info(
-                                        "Screen capture successfully processed with Tesseract OCR (fallback/default)."
-                                    )
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to perform local Tesseract OCR: {e}."
-                                    )
-                                    response_text = f"[OCR local fallback failed: {e}]"
-                            else:
-                                response_text = "[OCR failed: capture failed]"
 ```
