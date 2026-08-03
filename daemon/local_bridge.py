@@ -317,6 +317,7 @@ class ModelRouter:
         "fast_ocr": RouteTarget.LOCAL,
         "start_transcription": RouteTarget.LOCAL,
         "stop_transcription": RouteTarget.LOCAL,
+        "text_to_speech": RouteTarget.LOCAL,
         "concept_map": RouteTarget.REMOTE,
         "load_3d_model": RouteTarget.REMOTE,
         "generate_quiz": RouteTarget.REMOTE,
@@ -959,6 +960,74 @@ async def websocket_endpoint(websocket: WebSocket):
                             "text": response_text,
                         }
                         await websocket.send_text(json.dumps(ocr_payload))
+
+                    elif action == "text_to_speech":
+                        data_obj = payload.get("data") or {}
+                        text = data_obj.get("text", "")
+
+                        voice_model_path = os.getenv("PIPER_VOICE_MODEL_PATH")
+                        if not voice_model_path or not os.path.exists(voice_model_path):
+                            err_res = {
+                                "type": "error",
+                                "code": "TTS_NOT_CONFIGURED",
+                                "action": "text_to_speech",
+                                "message": "Nessun modello vocale Piper configurato. Scarica un modello .onnx (es. da rhasspy/piper-voices su Hugging Face) e imposta PIPER_VOICE_MODEL_PATH."
+                            }
+                            await websocket.send_text(json.dumps(err_res))
+                        else:
+                            temp_wav_path = None
+                            try:
+                                import tempfile
+                                import base64
+                                import subprocess
+
+                                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+                                    temp_wav_path = tmp_wav.name
+
+                                cmd = ["piper", "--model", voice_model_path, "--output_file", temp_wav_path]
+
+                                def run_piper():
+                                    proc = subprocess.Popen(
+                                        cmd,
+                                        stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        text=True,
+                                        encoding="utf-8"
+                                    )
+                                    proc.communicate(input=text)
+                                    return proc.returncode
+
+                                await asyncio.to_thread(run_piper)
+
+                                if os.path.exists(temp_wav_path) and os.path.getsize(temp_wav_path) > 0:
+                                    with open(temp_wav_path, "rb") as wav_file:
+                                        audio_b64 = base64.b64encode(wav_file.read()).decode("utf-8")
+
+                                    response_data = {
+                                        "type": "tts_audio",
+                                        "source": "local_engine",
+                                        "audio_base64": audio_b64,
+                                        "format": "wav"
+                                    }
+                                    await websocket.send_text(json.dumps(response_data))
+                                else:
+                                    raise RuntimeError("Piper subprocess did not produce a valid WAV file.")
+                            except Exception as e:
+                                logger.error(f"Error executing Piper local TTS: {e}")
+                                err_res = {
+                                    "type": "error",
+                                    "code": "TTS_GENERATION_FAILED",
+                                    "action": "text_to_speech",
+                                    "message": f"Errore durante la generazione della sintesi vocale: {str(e)}"
+                                }
+                                await websocket.send_text(json.dumps(err_res))
+                            finally:
+                                try:
+                                    if temp_wav_path and os.path.exists(temp_wav_path):
+                                        os.remove(temp_wav_path)
+                                except Exception:
+                                    pass
 
                     elif action == "start_transcription":
                         data_obj = payload.get("data") or {}
