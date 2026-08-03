@@ -879,7 +879,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         source_engine = "local_engine"
 
                         if capture_error is not None:
-                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {capture_error}]"
+                            response_text = f"Cattura schermo fallita: {capture_error}"
                         elif active_ocr_cred and img is not None:
                             logger.info(
                                 "Enabled 'ocr' scope credential found. Attempting remote Vision-LLM OCR..."
