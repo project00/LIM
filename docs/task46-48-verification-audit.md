@@ -36,7 +36,9 @@ def enforce_mutual_exclusivity(active_cred: Credential) -> None:
             c.enabled = False
 ```
 
-## 3. Full body of get_outgoing_headers() and attach_active_credentials()
+## 3. Full body of get_outgoing_headers()
+Note: `attach_active_credentials()` has been removed entirely from the codebase per headers-only propagation design.
+
 ```python
 def get_active_llm_credential(action: str | None) -> Credential | None:
     """Resolves active LLM credential based on action scope with fallback to global."""
@@ -117,29 +119,6 @@ def get_outgoing_headers(action: str, payload_data: dict) -> dict:
             )
 
     return headers
-
-
-def attach_active_credentials(payload: dict) -> None:
-    """Helper to attach active LLM and Sketchfab credentials from settings into the request payload."""
-    action = payload.get("action")
-    active_llm = get_active_llm_credential(action)
-    active_sf = next(
-        (c for c in settings.credentials if c.enabled and c.type == "sketchfab"), None
-    )
-
-    daemon_credentials = {}
-    if active_llm:
-        daemon_credentials["llm"] = {
-            "type": active_llm.type,
-            "model": active_llm.model,
-            "api_key": active_llm.api_key,
-            "api_base": active_llm.api_base,
-        }
-    if active_sf:
-        daemon_credentials["sketchfab"] = {"access_token": active_sf.access_token}
-
-    if daemon_credentials:
-        payload["credentials"] = daemon_credentials
 ```
 
 ## 4. Full literal HTML/JS for "Ambito" scope selector added to daemon/setup.html
