@@ -176,6 +176,11 @@
                     return;
                 }
 
+                if (data.type === "tts_audio") {
+                    handleTTSAudioMessage(data);
+                    return;
+                }
+
                 renderData(data);
             };
 
@@ -254,6 +259,13 @@
                         html += `<p>${escapeHTML(trimmed)}</p>`;
                     }
                 });
+                // Add TTS Listen button and audio player
+                html += `
+                    <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
+                        <button onclick="synthesizeSummary()" style="padding: 8px 12px; font-weight: bold; border-radius: 6px; background: #a6e3a1; color: #11111b; border: none; cursor: pointer;">🔊 Ascolta</button>
+                        <audio id="tts-audio-player" name="tts-audio-player" controls style="display: none; height: 32px;"></audio>
+                    </div>
+                `;
                 out.innerHTML = html;
             } else if (data.type === "math") {
                 lessonLog.push({
@@ -525,6 +537,35 @@
                 ws.send(JSON.stringify({
                     action: "generate_summary",
                     data: { lesson_log: lessonLog }
+                }));
+            }
+        }
+
+        function handleTTSAudioMessage(data) {
+            const player = document.getElementById("tts-audio-player");
+            if (player) {
+                player.src = "data:audio/wav;base64," + data.audio_base64;
+                player.style.display = "block";
+                player.play();
+
+                const toast = document.getElementById("toast-banner");
+                toast.innerText = "Sintesi vocale completata. Riproduzione in corso.";
+                toast.style.display = "block";
+                setTimeout(() => { toast.style.display = "none"; }, 3000);
+            }
+        }
+
+        function synthesizeSummary() {
+            if (!lastGeneratedSummary) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const toast = document.getElementById("toast-banner");
+                toast.innerText = "Sintesi vocale in corso...";
+                toast.style.display = "block";
+                setTimeout(() => { if (toast.innerText === "Sintesi vocale in corso...") toast.style.display = "none"; }, 3000);
+
+                ws.send(JSON.stringify({
+                    action: "text_to_speech",
+                    data: { text: lastGeneratedSummary }
                 }));
             }
         }
