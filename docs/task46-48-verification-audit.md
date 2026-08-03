@@ -207,3 +207,172 @@ document.getElementById("add-cred-btn").onclick = async () => {
   }
 };
 ```
+
+## 5. Vision-LLM OCR Research Finding & Associated Code
+
+### Research Finding for Multimodal Image Format in LiteLLM
+The official LiteLLM documentation specifies that vision-capable models (such as GPT-4o, Claude 3.5 Sonnet, Llama 3.2 Vision) require the OpenAI multimodal message format, where the message `content` is an array of objects. Text blocks are defined with type `"text"`, and images are defined with type `"image_url"`. The image URL accepts a base64 data URI (e.g. `data:image/png;base64,...`).
+Source reference: https://docs.litellm.ai/docs/providers/openai#multimodal-gpt-4-vision-gpt-4o
+
+### Literal Code in server/services/ocr_vision_service.py
+```python
+def generate_ocr_vision(
+    image_base64: str, llm_model: str, llm_api_key: str | None, llm_api_base: str | None
+) -> str:
+    """
+    Performs OCR on the provided base64-encoded image using a vision LLM.
+
+    Args:
+        image_base64: The base64-encoded image data.
+        llm_model: The vision LLM model to use (e.g. gpt-4o).
+        llm_api_key: Optional API key.
+        llm_api_base: Optional API base.
+
+    Returns:
+        The transcribed text.
+    """
+    logger.info("Performing remote Vision-LLM OCR using model '%s'", llm_model)
+
+    # Ensure correct data URI prefix for base64 image URL
+    if not image_base64.startswith("data:"):
+        image_url = f"data:image/png;base64,{image_base64}"
+    else:
+        image_url = image_base64
+
+    prompt_text = (
+        "trascrivi fedelmente il testo scritto in questa immagine, nient'altro"
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+        }
+    ]
+
+    completion_args = {"model": llm_model, "messages": messages}
+    if llm_api_key:
+        completion_args["api_key"] = llm_api_key
+    if llm_api_base:
+        completion_args["api_base"] = llm_api_base
+
+    try:
+        response = litellm.completion(**completion_args)
+        content = response.choices[0].message.content or ""
+        return content.strip()
+    except Exception as e:
+        logger.error("Vision-LLM OCR completion call failed: %s", e, exc_info=True)
+        raise e
+```
+
+### Literal Fallback-to-Tesseract code in daemon/local_bridge.py
+```python
+                        # 1. OCR Vision Dynamic Routing Exception:
+                        # Check for an enabled credential with scope=="ocr". If found, send the image
+                        # (base64) to the server action "ocr_vision" instead of running local Tesseract.
+                        # If NOT found, or if the vision call fails, fall back to local Tesseract OCR.
+                        active_ocr_cred = get_active_llm_credential("fast_ocr")
+                        response_text = None
+                        source_engine = "local_engine"
+
+                        if capture_error is not None:
+                            response_text = f"[OCR non ancora integrato, cattura fallita a causa di restrizioni display/headless: {capture_error}]"
+                        elif active_ocr_cred and img is not None:
+                            logger.info(
+                                "Enabled 'ocr' scope credential found. Attempting remote Vision-LLM OCR..."
+                            )
+                            try:
+                                import io
+                                import base64
+
+                                buffered = io.BytesIO()
+                                img.save(buffered, format="PNG")
+                                image_base64 = base64.b64encode(
+                                    buffered.getvalue()
+                                ).decode("utf-8")
+
+                                ocr_vision_payload = {
+                                    "action": "ocr_vision",
+                                    "data": {"image_base64": image_base64},
+                                }
+
+                                remote_analyze_url = (
+                                    f"{settings.remote_base_url}/api/v1/analyze"
+                                )
+                                req_headers = (
+                                    {"Authorization": f"Bearer {settings.api_key}"}
+                                    if settings.api_key
+                                    else {}
+                                )
+                                custom_headers = get_outgoing_headers("ocr_vision", {})
+                                req_headers.update(custom_headers)
+
+                                response = await http_client.post(
+                                    remote_analyze_url,
+                                    json=ocr_vision_payload,
+                                    headers=req_headers,
+                                )
+                                response.raise_for_status()
+                                response_json = response.json()
+
+                                if response_json.get("type") == "error":
+                                    logger.warning(
+                                        "Remote Vision OCR returned error response: %s. Falling back to Tesseract.",
+                                        response_json.get("message"),
+                                    )
+                                else:
+                                    response_text = response_json.get("text")
+                                    source_engine = "remote_vision_llm"
+                                    logger.info(
+                                        "Successfully completed remote Vision-LLM OCR."
+                                    )
+                            except Exception as ve:
+                                logger.error(
+                                    "Remote Vision OCR call failed due to: %s. Falling back to Tesseract.",
+                                    ve,
+                                    exc_info=True,
+                                )
+
+                        # Fallback to local Tesseract if remote Vision OCR was not used or failed
+                        if response_text is None:
+                            if img is not None:
+                                try:
+                                    response_text = pytesseract.image_to_string(
+                                        img
+                                    ).strip()
+                                    logger.info(
+                                        "Screen capture successfully processed with Tesseract OCR (fallback/default)."
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to perform local Tesseract OCR: {e}."
+                                    )
+                                    response_text = f"[OCR local fallback failed: {e}]"
+                            else:
+                                response_text = "[OCR failed: capture failed]"
+```
+
+## 6. Literal Names and One-Line Docstrings of New Test Functions Added
+
+### `daemon/tests/test_credentials.py`
+* `test_scoped_credential_mutual_exclusivity()`: "Tests that: 1. Enabling a scoped credential does not disable an unrelated-scope credential. 2. Enabling two credentials with the same scope correctly disables the first."
+* `test_get_outgoing_headers_scoped_resolution_and_fallback()`: "Tests that scoped LLM credentials are dynamically resolved based on the requested action, with a fallback to the global LLM."
+
+### `daemon/tests/test_local_bridge.py`
+* `test_fast_ocr_routes_to_ocr_vision_when_credential_enabled()`: "Tests that fast_ocr routes to ocr_vision remote action when ocr scope credential is enabled."
+* `test_fast_ocr_uses_local_tesseract_when_no_ocr_credential()`: "Tests that fast_ocr uses local Tesseract OCR directly if no ocr scope credential is enabled."
+* `test_fast_ocr_falls_back_to_tesseract_when_vision_call_fails()`: "Tests that fast_ocr falls back to local Tesseract OCR if the remote Vision API call fails."
+
+### `server/tests/test_ocr_vision.py`
+* `test_ocr_vision_service_multimodal_payload()`: "Tests that ocr_vision_service formats the multimodal payload correctly for LiteLLM."
+* `test_ocr_vision_analyze_endpoint_success()`: "Tests that /api/v1/analyze handles 'ocr_vision' action successfully with credentials."
+* `test_ocr_vision_analyze_endpoint_missing_credentials()`: "Tests that /api/v1/analyze returns MISSING_CREDENTIALS for 'ocr_vision' if model is not set."
+
+## 7. Verification UI Screenshot Reference
+The Setup UI was updated to include the scope dropdown selector and list column. The screenshot has been saved at:
+`docs/task46-setup-ui-screenshot.png`
+
+![Setup with Scoped Credential](task46-setup-ui-screenshot.png)
