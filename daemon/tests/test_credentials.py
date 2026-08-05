@@ -311,33 +311,37 @@ def test_scoped_credential_mutual_exclusivity():
 def test_get_outgoing_headers_scoped_resolution_and_fallback():
     from local_bridge import get_outgoing_headers
 
-    settings.credentials = [
-        Credential(
-            id="global_llm",
-            name="Global LLM",
-            type="llm_cloud",
-            scope="global",
-            enabled=True,
-            model="gpt-global",
-            api_key="key-global",
-        ),
-        Credential(
-            id="map_llm",
-            name="Map LLM",
-            type="llm_cloud",
-            scope="concept_map",
-            enabled=True,
-            model="gpt-map",
-            api_key="key-map",
-        ),
-    ]
+    original_creds = list(settings.credentials)
+    try:
+        settings.credentials = [
+            Credential(
+                id="global_llm",
+                name="Global LLM",
+                type="llm_cloud",
+                scope="global",
+                enabled=True,
+                model="gpt-global",
+                api_key="key-global",
+            ),
+            Credential(
+                id="map_llm",
+                name="Map LLM",
+                type="llm_cloud",
+                scope="concept_map",
+                enabled=True,
+                model="gpt-map",
+                api_key="key-map",
+            ),
+        ]
 
-    # concept_map action should resolve the scoped Map LLM
-    headers_map = get_outgoing_headers("concept_map", {})
-    assert headers_map["X-LLM-Model"] == "gpt-map"
-    assert headers_map["X-LLM-API-Key"] == "key-map"
+        # concept_map action should resolve the scoped Map LLM
+        headers_map = get_outgoing_headers("concept_map", {})
+        assert headers_map["X-LLM-Model"] == "gpt-map"
+        assert headers_map["X-LLM-API-Key"] == "key-map"
 
-    # generate_quiz has no quiz_and_summary credential, so it should fallback to Global LLM
-    headers_quiz = get_outgoing_headers("generate_quiz", {})
-    assert headers_quiz["X-LLM-Model"] == "gpt-global"
-    assert headers_quiz["X-LLM-API-Key"] == "key-global"
+        # generate_quiz has no quiz_and_summary credential, so it should fallback to Global LLM
+        headers_quiz = get_outgoing_headers("generate_quiz", {})
+        assert headers_quiz["X-LLM-Model"] == "gpt-global"
+        assert headers_quiz["X-LLM-API-Key"] == "key-global"
+    finally:
+        settings.credentials = original_creds
