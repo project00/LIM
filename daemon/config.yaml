@@ -4,7 +4,7 @@ credentials:
   api_base: null
   api_key: null
   enabled: true
-  id: c137f1b5-3aa7-451c-9ed7-e25b63e00991
+  id: 87620d16-dacf-430d-a2d7-f02119051042
   model: qwen
   name: Concept Map Qwen
   scope: concept_map
@@ -13,7 +13,7 @@ credentials:
   api_base: null
   api_key: null
   enabled: false
-  id: 18bb19b9-c754-4776-992e-0eb17c0e0fb6
+  id: 31197316-2fae-4a96-b8f7-8bb985f4bfe6
   model: gemma
   name: Translate Gemma
   scope: translation
@@ -22,7 +22,7 @@ credentials:
   api_base: null
   api_key: null
   enabled: true
-  id: 7688b3bc-2d6d-4b61-9be9-ebb24b45d362
+  id: b809fc2e-b190-4769-9b67-f3c3abe85fa2
   model: deepseek
   name: Translate DeepSeek
   scope: translation
