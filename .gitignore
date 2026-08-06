@@ -20,6 +20,7 @@ htmlcov/
 ! .env.example
 
 # LIM-AI local & remote caches and backups
+daemon/config.yaml
 daemon/lesson_backups/
 daemon/model_cache/
 server/model_cache/
