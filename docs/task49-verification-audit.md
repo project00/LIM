@@ -191,4 +191,117 @@ async def test_text_to_speech_model_path_unset(monkeypatch) -> None:
         assert response["code"] == "TTS_NOT_CONFIGURED"
         assert response["action"] == "text_to_speech"
         assert "Nessun modello vocale" in response["message"]
+
+---
+
+## 7. Git History Secret Audit on daemon/config.yaml
+
+### Git Log History
+```
+ae5b208 Create diagnostico.md with complete dependency investigation outputs
+16b9179 Create diagnostico.md with complete dependency investigation outputs
+ee3c78d Fix Sketchfab relevance search bug, remove fallback, write audit document, and add all-stopword test case.
+808502c fix: return absolute URLs for locally cached 3D model assets
+```
+
+### Commit Analysis: Commit ae5b208
+```yaml
+api_key: ''
+credentials:
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: 87620d16-dacf-430d-a2d7-f02119051042
+  model: qwen
+  name: Concept Map Qwen
+  scope: concept_map
+  type: llm_cloud
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: false
+  id: 31197316-2fae-4a96-b8f7-8bb985f4bfe6
+  model: gemma
+  name: Translate Gemma
+  scope: translation
+  type: llm_ollama
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: b809fc2e-b190-4769-9b67-f3c3abe85fa2
+  model: deepseek
+  name: Translate DeepSeek
+  scope: translation
+  type: llm_cloud
+disable_local_backup: false
+remote_action_timeout_seconds: 30
+remote_base_url: http://192.168.1.100:8000
+silence_rms_threshold: 400
+```
+- Findings: api_key is '', all credential-level api_keys and access_tokens are null. (No secrets committed)
+
+### Commit Analysis: Commit 16b9179
+```yaml
+api_key: ''
+credentials:
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: 87620d16-dacf-430d-a2d7-f02119051042
+  model: qwen
+  name: Concept Map Qwen
+  scope: concept_map
+  type: llm_cloud
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: false
+  id: 31197316-2fae-4a96-b8f7-8bb985f4bfe6
+  model: gemma
+  name: Translate Gemma
+  scope: translation
+  type: llm_ollama
+- access_token: null
+  api_base: null
+  api_key: null
+  enabled: true
+  id: b809fc2e-b190-4769-9b67-f3c3abe85fa2
+  model: deepseek
+  name: Translate DeepSeek
+  scope: translation
+  type: llm_cloud
+disable_local_backup: false
+remote_action_timeout_seconds: 30
+remote_base_url: http://192.168.1.100:8000
+silence_rms_threshold: 400
+```
+- Findings: api_key is '', all credential-level api_keys and access_tokens are null. (No secrets committed)
+
+### Commit Analysis: Commit ee3c78d
+```yaml
+api_key: ''
+credentials: []
+disable_local_backup: false
+remote_action_timeout_seconds: 30
+remote_base_url: http://192.168.1.100:8000
+silence_rms_threshold: 400
+```
+- Findings: api_key is '', credentials list is empty. (No secrets committed)
+
+### Commit Analysis: Commit 808502c
+```yaml
+api_key: ''
+credentials: []
+disable_local_backup: false
+remote_action_timeout_seconds: 30
+remote_base_url: http://192.168.1.100:8000
+silence_rms_threshold: 400
+```
+- Findings: api_key is '', credentials list is empty. (No secrets committed)
+
+### Verification Audit Conclusion
+No real secrets (non-null api_key, access_token, etc.) were ever committed in the git history of `daemon/config.yaml`. All occurrences across all historical commits are safely empty (`''`) or `null`. No credential rotation is needed.
 ```
