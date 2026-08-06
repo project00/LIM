@@ -9,13 +9,7 @@ Design Note:
 """
 
 import os
-import sys
 from unittest.mock import MagicMock, patch
-
-# Mock piper and onnxruntime entirely at the import level
-# to prevent any real onnxruntime / piper loading or initialization in tests.
-sys.modules["piper"] = MagicMock()
-sys.modules["onnxruntime"] = MagicMock()
 
 # Configure global mock environment variables
 os.environ["API_KEY"] = "test_secret_token"
