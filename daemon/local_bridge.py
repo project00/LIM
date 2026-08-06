@@ -980,6 +980,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 import tempfile
                                 import base64
                                 import subprocess
+                                import piper
 
                                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
                                     temp_wav_path = tmp_wav.name
