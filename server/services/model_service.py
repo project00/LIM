@@ -103,6 +103,7 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
     logger.info("Searching Sketchfab for 3D model query: '%s'", query)
 
     if not sketchfab_token:
+        logger.error("Sketchfab access token is empty or missing.")
         raise RuntimeError("Sketchfab access token is not configured. Request cannot be processed.")
 
     # 1. Search Sketchfab
@@ -113,21 +114,41 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         "limit": 10
     }
 
+    # Redact token, but explicitly log if Authorization header is present/empty
+    auth_headers = get_auth_headers(sketchfab_token)
+    auth_header_val = auth_headers.get("Authorization", "")
+    auth_present = "PRESENT" if auth_header_val.strip() else "EMPTY"
+
+    logger.info(
+        "Sending search query to Sketchfab. URL: '%s', query params: %s. Authorization header: %s",
+        search_url,
+        params,
+        auth_present
+    )
+
     try:
         # Use sync HTTP client following the requests-like model for ease of integration
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(search_url, params=params, headers=get_auth_headers(sketchfab_token))
+            response = client.get(search_url, params=params, headers=auth_headers)
+
+            logger.info("Received response from Sketchfab Search API. Status code: %d", response.status_code)
 
             if response.status_code != 200:
-                logger.error("Sketchfab search failed: %d - %s", response.status_code, response.text)
-                raise RuntimeError(f"Sketchfab Search API failure: {response.text}")
+                logger.error(
+                    "Sketchfab search failed distinctly with non-200 status code: %d. Error details: %s",
+                    response.status_code,
+                    response.text
+                )
+                raise RuntimeError(f"Sketchfab Search API failure (HTTP {response.status_code}): {response.text}")
 
             search_data = response.json()
     except httpx.HTTPError as e:
         logger.error("Network error during Sketchfab search: %s", e)
-        raise RuntimeError(f"Impossibile connettersi a Sketchfab: {e}")
+        raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
 
     results = search_data.get("results", [])
+    logger.info("Sketchfab search returned %d candidate results.", len(results))
+
     if not results:
         logger.warning("No Sketchfab search results for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
@@ -137,20 +158,43 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
 
     # Selection Heuristic: Find first model explicitly marked downloadable, CC-licensed, and matching the name-relevance filter
     selected_model = None
-    for model in results:
-        # We queried downloadable=true, but verify just in case
-        if not model.get("isDownloadable", True):
-            continue
-
+    for idx, model in enumerate(results):
+        m_name = model.get("name", "Modello Sconosciuto")
+        m_uid = model.get("uid", "no-uid")
+        is_dl = model.get("isDownloadable")
         license_data = model.get("license") or {}
-        if not is_cc_licensed(license_data):
+        lic_slug = license_data.get("slug", "no-slug")
+        is_cc = is_cc_licensed(license_data)
+
+        logger.info(
+            "Evaluating candidate #%d: Name='%s', UID='%s', isDownloadable=%s, license_slug='%s'",
+            idx + 1,
+            m_name,
+            m_uid,
+            is_dl,
+            lic_slug
+        )
+
+        # We queried downloadable=true, but verify just in case
+        if not is_dl:
+            logger.info("Candidate '%s' (UID: %s) rejected: not downloadable", m_name, m_uid)
             continue
 
-        model_name = model.get("name", "").lower()
-        if not any(word in model_name for word in significant_words):
-            logger.info("Rejecting model '%s' because name does not contain any query significant words: %s", model.get("name"), significant_words)
+        if not is_cc:
+            logger.info("Candidate '%s' (UID: %s) rejected: not CC", m_name, m_uid)
             continue
 
+        model_name_lower = m_name.lower()
+        if not any(word in model_name_lower for word in significant_words):
+            logger.info(
+                "Candidate '%s' (UID: %s) rejected: name does not match any query significant words %s",
+                m_name,
+                m_uid,
+                significant_words
+            )
+            continue
+
+        logger.info("Candidate '%s' (UID: %s) accepted (passed all filters)!", m_name, m_uid)
         selected_model = model
         break
 
@@ -179,18 +223,30 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
 
         # Get temporary download link
         download_endpoint = f"https://api.sketchfab.com/v3/models/{uid}/download"
+        logger.info("Requesting temporary download link from Sketchfab Download API: '%s'", download_endpoint)
+
         try:
             with httpx.Client(timeout=10.0) as client:
-                download_resp = client.get(download_endpoint, headers=get_auth_headers(sketchfab_token))
+                dl_headers = get_auth_headers(sketchfab_token)
+                dl_auth_present = "PRESENT" if dl_headers.get("Authorization", "").strip() else "EMPTY"
+                logger.info("Sending download request with Auth header: %s", dl_auth_present)
 
+                download_resp = client.get(download_endpoint, headers=dl_headers)
+
+                logger.info("Download link API response status: %d", download_resp.status_code)
                 if download_resp.status_code != 200:
-                    logger.error("Failed to request download for model %s: %d - %s", uid, download_resp.status_code, download_resp.text)
-                    raise RuntimeError(f"Sketchfab Download API failure: {download_resp.text}")
+                    logger.error(
+                        "Failed to request download for model %s: distinctly non-200 status code: %d - %s",
+                        uid,
+                        download_resp.status_code,
+                        download_resp.text
+                    )
+                    raise RuntimeError(f"Sketchfab Download API failure (HTTP {download_resp.status_code}): {download_resp.text}")
 
                 download_info = download_resp.json()
         except httpx.HTTPError as e:
             logger.error("Network error during Sketchfab download request: %s", e)
-            raise RuntimeError(f"Impossibile richiedere il download a Sketchfab: {e}")
+            raise RuntimeError(f"Impossibile richiedere il download a Sketchfab due to network error: {e}")
 
         gltf_info = download_info.get("gltf")
         if not gltf_info or not gltf_info.get("url"):
@@ -198,21 +254,25 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             raise RuntimeError("Nessun link di download glTF disponibile per questo modello.")
 
         download_archive_url = gltf_info["url"]
+        logger.info("Resolved glTF download URL: '%s'", download_archive_url)
 
         # Download and extract the archive immediately
+        logger.info("Downloading binary model ZIP archive from AWS S3 resolved URL...")
         try:
             with httpx.Client(timeout=30.0) as client:
                 archive_resp = client.get(download_archive_url)
+                logger.info("Archive download response status code: %d", archive_resp.status_code)
                 if archive_resp.status_code != 200:
-                    logger.error("Failed to download model archive from AWS S3: %d", archive_resp.status_code)
-                    raise RuntimeError("Download dell'archivio glTF fallito.")
+                    logger.error("Failed to download model archive from AWS S3. Status: %d", archive_resp.status_code)
+                    raise RuntimeError(f"Download dell'archivio glTF fallito (HTTP {archive_resp.status_code}).")
 
                 archive_bytes = archive_resp.content
         except httpx.HTTPError as e:
             logger.error("Network error during archive download: %s", e)
-            raise RuntimeError(f"Errore di download dell'archivio glTF: {e}")
+            raise RuntimeError(f"Errore di download dell'archivio glTF due to network error: {e}")
 
         # Extract unzipped archive directly to cache directory
+        logger.info("Extracting ZIP archive (%d bytes) to cache directory: %s", len(archive_bytes), model_dir)
         try:
             with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zip_ref:
                 zip_ref.extractall(model_dir)
