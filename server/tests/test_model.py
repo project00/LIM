@@ -177,6 +177,64 @@ def test_search_api_failure_raises_runtime_error(mock_get: MagicMock) -> None:
         search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
 
+@patch("httpx.Client.get")
+def test_api_401_auth_error_produces_remote_service_error(mock_get: MagicMock) -> None:
+    """Tests that a Sketchfab 401 unauthorized status produces a REMOTE_SERVICE_ERROR, not MODEL_NOT_FOUND."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.text = "Unauthorized - invalid token"
+    mock_get.return_value = mock_resp
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "invalid-token"
+    }
+    payload = {
+        "action": "load_3d_model",
+        "data": {
+            "query": "H2O"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "REMOTE_SERVICE_ERROR"
+    assert "failure (HTTP 401)" in data["message"]
+
+
+@patch("httpx.Client.get")
+def test_api_429_rate_limit_produces_remote_service_error(mock_get: MagicMock) -> None:
+    """Tests that a Sketchfab 429 rate limit status produces a REMOTE_SERVICE_ERROR, not MODEL_NOT_FOUND."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    mock_resp.text = "Rate limit exceeded"
+    mock_get.return_value = mock_resp
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "some-token"
+    }
+    payload = {
+        "action": "load_3d_model",
+        "data": {
+            "query": "H2O"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["type"] == "error"
+    assert data["code"] == "REMOTE_SERVICE_ERROR"
+    assert "failure (HTTP 429)" in data["message"]
+
+
 # ------------------ API End-to-End Routing Tests ------------------
 
 @patch("litellm.completion")
