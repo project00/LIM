@@ -130,6 +130,7 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             response = client.get(search_url, params=params, headers=auth_headers)
 
             logger.info("Received response from Sketchfab Search API. Status code: %d", response.status_code)
+            logger.info("RESOLVED OUTGOING URL: %s", str(response.request.url))
 
             if response.status_code != 200:
                 logger.error(
@@ -139,7 +140,13 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
                 )
                 raise RuntimeError(f"Sketchfab Search API failure (HTTP {response.status_code}): {response.text}")
 
+            import json
             search_data = response.json()
+            logger.info("RAW JSON RESPONSE BODY (TRUNCATED): %s", json.dumps(search_data)[:3000])
+
+            # Check and log top-level metadata about total match count or applied filters / pagination / cursor
+            metadata_keys = {k: v for k, v in search_data.items() if k != "results"}
+            logger.info("TOP-LEVEL METADATA: %s", json.dumps(metadata_keys))
     except httpx.HTTPError as e:
         logger.error("Network error during Sketchfab search: %s", e)
         raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
