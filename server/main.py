@@ -382,7 +382,7 @@ async def analyze(
 
         try:
             # Transcribe audio using the STT service
-            text = transcribe_audio(
+            text, lang_prob = transcribe_audio(
                 audio_base64=audio_base64,
                 sample_rate=int(sample_rate),
                 encoding=str(encoding),
@@ -391,7 +391,19 @@ async def analyze(
             target_language = data_obj.get("target_language")
             translated_text = None
             if target_language:
-                if x_model:
+                # Retrieve custom confidence threshold from environment variables (default 0.5)
+                conf_threshold_str = os.getenv("STT_LANGUAGE_CONFIDENCE_THRESHOLD", "0.5")
+                try:
+                    conf_threshold = float(conf_threshold_str)
+                except ValueError:
+                    conf_threshold = 0.5
+
+                if lang_prob < conf_threshold:
+                    logger.info(
+                        "Traduzione saltata: rilevamento lingua a bassa confidenza (prob=%.2f)",
+                        lang_prob,
+                    )
+                elif x_model:
                     try:
                         translated_text = translate_text(
                             text, str(target_language), x_model, x_key, x_base

@@ -155,7 +155,7 @@ def test_action_aware_rate_limiting(mock_stt: MagicMock, mock_completion: MagicM
     limiter.reset()
 
     # Configure mock completion and stt responses
-    mock_stt.return_value = "Hello"
+    mock_stt.return_value = ("Hello", 0.9)
 
     mock_choice = MagicMock()
     mock_choice.message.content = "graph TD\n  A --> B"
