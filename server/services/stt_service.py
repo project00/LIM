@@ -44,7 +44,7 @@ except Exception as e:
     raise RuntimeError(f"Failed to initialize WhisperModel: {e}") from e
 
 
-def transcribe_audio(audio_base64: str, sample_rate: int, encoding: str) -> str:
+def transcribe_audio(audio_base64: str, sample_rate: int, encoding: str) -> tuple[str, float]:
     """
     Decodes base64-encoded audio, converts PCM bytes to a float32 NumPy array,
     and performs speech-to-text using the module-level WhisperModel.
@@ -55,7 +55,7 @@ def transcribe_audio(audio_base64: str, sample_rate: int, encoding: str) -> str:
         encoding: Encoding format of the audio (e.g., "pcm_s16le").
 
     Returns:
-        The fully transcribed text string from the audio segment.
+        A tuple of (transcribed_text, language_probability).
 
     Raises:
         ValueError: If an unsupported audio encoding is provided.
@@ -98,8 +98,20 @@ def transcribe_audio(audio_base64: str, sample_rate: int, encoding: str) -> str:
             text_pieces.append(segment.text)
 
         full_text = "".join(text_pieces).strip()
-        logger.info("Transcription completed. Transcribed length: %d chars.", len(full_text))
-        return full_text
+
+        # Extract detected language probability safely (handling mocks without language_probability)
+        language_probability = 1.0
+        if info is not None:
+            prob = getattr(info, "language_probability", None)
+            if isinstance(prob, (int, float)):
+                language_probability = float(prob)
+
+        logger.info(
+            "Transcription completed. Transcribed length: %d chars. Language prob: %.4f",
+            len(full_text),
+            language_probability,
+        )
+        return full_text, language_probability
 
     except Exception as e:
         logger.error("Error occurred during Whisper model transcription: %s", e)

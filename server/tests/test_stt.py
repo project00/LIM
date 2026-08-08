@@ -31,23 +31,26 @@ def reset_mock_model() -> None:
 
 
 def test_transcribe_audio_success() -> None:
-    """Tests that transcribe_audio successfully decodes base64, runs transcription, and returns text."""
+    """Tests that transcribe_audio successfully decodes base64, runs transcription, and returns text and language_probability."""
     # Generate 100 samples of 16-bit PCM silent audio (200 bytes)
     raw_bytes = b"\x00" * 200
     audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
 
-    # Set up mock transcription segments
+    # Set up mock transcription segments and info
     mock_seg = MagicMock()
     mock_seg.text = "Hello world from mocked Whisper"
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.85
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
-    result_text = transcribe_audio(
+    result_text, lang_prob = transcribe_audio(
         audio_base64=audio_base64,
         sample_rate=16000,
         encoding="pcm_s16le"
     )
 
     assert result_text == "Hello world from mocked Whisper"
+    assert lang_prob == 0.85
 
     # Verify faster-whisper was called with the correct numpy array
     mocked_model_instance.transcribe.assert_called_once()
@@ -123,7 +126,9 @@ def test_wav_fixture_end_to_end(tmp_path: Path) -> None:
     # 4. Configure mocked Whisper return value
     mock_seg = MagicMock()
     mock_seg.text = "This is a real WAV test."
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.99
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
     # 5. Call `/api/v1/analyze` endpoint
     client = TestClient(app)
@@ -185,6 +190,97 @@ def test_import_fails_when_whisper_model_size_unset() -> None:
 
 
 @patch("litellm.completion")
+def test_transcribe_audio_skips_translation_on_low_confidence(mock_completion: MagicMock) -> None:
+    """
+    Tests that if language detection confidence is below the threshold,
+    the translation is skipped and translated_text is returned as None,
+    even if target_language and LLM credentials are provided.
+    """
+    raw_bytes = b"\x00" * 200
+    audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    # 1. Mock low confidence language detection (prob = 0.28 < default 0.5)
+    mock_seg = MagicMock()
+    mock_seg.text = "Hello low confidence world"
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.28
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
+    payload = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": audio_base64,
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le",
+            "target_language": "it"
+        }
+    }
+
+    # Use default threshold 0.5 (so 0.28 triggers skip)
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "transcription"
+    assert data["text"] == "Hello low confidence world"
+    assert data["translated_text"] is None
+
+    # Verify that LiteLLM completion was NOT called
+    mock_completion.assert_not_called()
+
+
+@patch("litellm.completion")
+def test_transcribe_audio_skips_translation_on_low_confidence_custom_threshold(mock_completion: MagicMock, monkeypatch) -> None:
+    """
+    Tests that custom STT_LANGUAGE_CONFIDENCE_THRESHOLD env var overrides default threshold.
+    """
+    monkeypatch.setenv("STT_LANGUAGE_CONFIDENCE_THRESHOLD", "0.75")
+
+    raw_bytes = b"\x00" * 200
+    audio_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    # Mock confidence detection (prob = 0.60, which is > 0.5 but < custom 0.75)
+    mock_seg = MagicMock()
+    mock_seg.text = "Hello custom threshold world"
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.60
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-LLM-Model": "gpt-4o-mini",
+        "X-LLM-API-Key": "test_provider_key"
+    }
+    payload = {
+        "action": "transcribe_audio",
+        "data": {
+            "audio_base64": audio_base64,
+            "sample_rate": 16000,
+            "encoding": "pcm_s16le",
+            "target_language": "it"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "transcription"
+    assert data["text"] == "Hello custom threshold world"
+    assert data["translated_text"] is None
+
+    # Verify that LiteLLM completion was NOT called
+    mock_completion.assert_not_called()
+
+
+@patch("litellm.completion")
 def test_transcribe_audio_with_translation_success(mock_completion: MagicMock) -> None:
     """
     Tests that POST /api/v1/analyze with a 'transcribe_audio' action and truthy target_language
@@ -197,7 +293,9 @@ def test_transcribe_audio_with_translation_success(mock_completion: MagicMock) -
     # 2. Mock STT transcription response
     mock_seg = MagicMock()
     mock_seg.text = "Hello world"
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.95
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
     # 3. Mock LiteLLM translation response
     mock_choice = MagicMock()
@@ -253,7 +351,9 @@ def test_transcribe_audio_without_translation_skips(mock_completion: MagicMock) 
 
     mock_seg = MagicMock()
     mock_seg.text = "Hello world"
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.95
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer test_secret_token"}
@@ -292,7 +392,9 @@ def test_transcribe_audio_with_translation_error(mock_completion: MagicMock) -> 
     # 2. Mock STT transcription response
     mock_seg = MagicMock()
     mock_seg.text = "Hello world"
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.95
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
     # 3. Mock LiteLLM to raise an APIError
     import litellm
@@ -339,7 +441,9 @@ def test_transcribe_audio_translation_graceful_degradation_missing_model(mock_co
 
     mock_seg = MagicMock()
     mock_seg.text = "Hello world"
-    mocked_model_instance.transcribe.return_value = ([mock_seg], MagicMock())
+    mock_info = MagicMock()
+    mock_info.language_probability = 0.95
+    mocked_model_instance.transcribe.return_value = ([mock_seg], mock_info)
 
     client = TestClient(app)
     # X-LLM-Model is missing in headers!
