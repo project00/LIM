@@ -57,19 +57,16 @@ def extract_significant_words(query: str) -> list[str]:
 
 def is_cc_licensed(license_data: dict) -> bool:
     """
-    Checks if the license is Creative Commons based on slug, name, or key identifiers.
+    Checks if the license is Creative Commons based on slug or key identifiers.
     Standard Sketchfab CC license slugs include: by, by-sa, by-nd, by-nc, by-nc-sa, by-nc-nd, cc0
     """
     if not license_data:
         return False
     slug = license_data.get("slug", "").lower()
-    name = license_data.get("name", "").lower()
 
     # Check common CC markers
     cc_slugs = ["by", "cc0", "share-alike", "attribution", "noncommercial"]
     if any(x in slug for x in cc_slugs):
-        return True
-    if "creative commons" in name or "cc0" in name:
         return True
     return False
 
@@ -108,10 +105,11 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
 
     # 1. Search Sketchfab
     search_url = "https://api.sketchfab.com/v3/models"
+    # Increased limit parameter to 24 (reasonable increase from 10 to give a larger candidate pool)
     params = {
         "q": query,
         "downloadable": "true",
-        "limit": 10
+        "limit": 24
     }
 
     # Redact token, but explicitly log if Authorization header is present/empty
@@ -146,19 +144,19 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         logger.error("Network error during Sketchfab search: %s", e)
         raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
 
-    results = search_data.get("results", [])
-    logger.info("Sketchfab search returned %d candidate results.", len(results))
+    raw_results = search_data.get("results", [])
+    logger.info("Sketchfab search returned %d raw candidate results.", len(raw_results))
 
-    if not results:
+    if not raw_results:
         logger.warning("No Sketchfab search results for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
     significant_words = extract_significant_words(query)
     logger.info("Significant words for query '%s': %s", query, significant_words)
 
-    # Selection Heuristic: Find first model explicitly marked downloadable, CC-licensed, and matching the name-relevance filter
-    selected_model = None
-    for idx, model in enumerate(results):
+    # Pre-filter: collect all models that are explicitly downloadable and CC-licensed
+    downloadable_cc_candidates = []
+    for idx, model in enumerate(raw_results):
         m_name = model.get("name", "Modello Sconosciuto")
         m_uid = model.get("uid", "no-uid")
         is_dl = model.get("isDownloadable")
@@ -167,7 +165,7 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         is_cc = is_cc_licensed(license_data)
 
         logger.info(
-            "Evaluating candidate #%d: Name='%s', UID='%s', isDownloadable=%s, license_slug='%s'",
+            "Evaluating raw candidate #%d: Name='%s', UID='%s', isDownloadable=%s, license_slug='%s'",
             idx + 1,
             m_name,
             m_uid,
@@ -175,7 +173,6 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             lic_slug
         )
 
-        # We queried downloadable=true, but verify just in case
         if not is_dl:
             logger.info("Candidate '%s' (UID: %s) rejected: not downloadable", m_name, m_uid)
             continue
@@ -184,24 +181,39 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             logger.info("Candidate '%s' (UID: %s) rejected: not CC", m_name, m_uid)
             continue
 
-        model_name_lower = m_name.lower()
-        if not any(word in model_name_lower for word in significant_words):
-            logger.info(
-                "Candidate '%s' (UID: %s) rejected: name does not match any query significant words %s",
-                m_name,
-                m_uid,
-                significant_words
-            )
-            continue
+        downloadable_cc_candidates.append(model)
 
-        logger.info("Candidate '%s' (UID: %s) accepted (passed all filters)!", m_name, m_uid)
-        selected_model = model
-        break
-
-    # If no result passes both relevance filter AND downloadable/CC filter, return MODEL_NOT_FOUND
-    if not selected_model:
-        logger.warning("No Sketchfab search results passed both the downloadable/CC filter and the name relevance filter for query: '%s'", query)
+    if not downloadable_cc_candidates:
+        logger.warning("No Sketchfab search results passed the downloadable and CC filter for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
+
+    selected_model = None
+
+    # Pass 1: find first model in downloadable_cc_candidates whose name contains at least one significant query word
+    for model in downloadable_cc_candidates:
+        m_name = model.get("name", "Modello Sconosciuto")
+        m_uid = model.get("uid", "no-uid")
+        model_name_lower = m_name.lower()
+
+        if any(word in model_name_lower for word in significant_words):
+            logger.info("Pass 1 match: Candidate '%s' (UID: %s) contains significant query word(s) %s", m_name, m_uid, significant_words)
+            selected_model = model
+            break
+        else:
+            logger.info("Pass 1 skip: Candidate '%s' (UID: %s) does not match significant query words %s", m_name, m_uid, significant_words)
+
+    # Pass 2: Fallback to the first downloadable + CC candidate if Pass 1 found nothing
+    if not selected_model:
+        fallback_cand = downloadable_cc_candidates[0]
+        fallback_name = fallback_cand.get("name", "Modello Sconosciuto")
+        fallback_uid = fallback_cand.get("uid", "no-uid")
+        logger.warning(
+            "Nessuna corrispondenza esatta sul nome per '%s' — uso il primo risultato scaricabile/CC come fallback: '%s' (uid=%s)",
+            query,
+            fallback_name,
+            fallback_uid
+        )
+        selected_model = fallback_cand
 
     uid = selected_model.get("uid")
     name = selected_model.get("name", "Modello 3D")

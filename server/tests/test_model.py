@@ -447,15 +447,16 @@ def test_search_relevance_h2o_bug_resolved(mock_get: MagicMock) -> None:
 
 @patch("httpx.Client.get")
 def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
-    """Tests that if no result matches both the relevance filter and downloadable/CC filters, we raise a ValueError."""
+    """Tests that if no result matches the downloadable/CC filters, we raise a ValueError."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
+    # No downloadable model
     mock_search_resp.json.return_value = {
         "results": [
             {
                 "uid": "villa_uid_999",
                 "name": "Luxury Modern Villa with Pool",
-                "isDownloadable": True,
+                "isDownloadable": False,
                 "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
                 "user": {
                     "username": "architect",
@@ -475,8 +476,9 @@ def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
 
 
 @patch("httpx.Client.get")
-def test_search_all_stopwords_query_raises_error(mock_get: MagicMock) -> None:
-    """Tests that a query composed entirely of stopwords (like "la il") returns MODEL_NOT_FOUND (ValueError) and doesn't match spuriously."""
+def test_search_all_stopwords_query_fallback(mock_get: MagicMock) -> None:
+    """Tests that a query composed entirely of stopwords (like "la il") falls back to first downloadable+CC model since Pass 1 finds no matching significant word."""
+    # 1. Setup mock search response with a downloadable/CC model
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
     mock_search_resp.json.return_value = {
@@ -497,8 +499,74 @@ def test_search_all_stopwords_query_raises_error(mock_get: MagicMock) -> None:
             }
         ]
     }
-    mock_get.return_value = mock_search_resp
 
-    # "la il" are both in the stopwords set. Should return MODEL_NOT_FOUND (ValueError)
-    with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
-        search_and_fetch_3d_model("la il", "test-sketchfab-token")
+    # 2. Setup mock download link response
+    mock_download_resp = MagicMock()
+    mock_download_resp.status_code = 200
+    mock_download_resp.json.return_value = {
+        "gltf": {
+            "url": "https://s3.amazonaws.com/sketchfab/archives/villa.zip",
+            "size": 1024,
+            "expires": 300
+        }
+    }
+
+    # 3. Setup mock zip archive response
+    mock_archive_resp = MagicMock()
+    mock_archive_resp.status_code = 200
+    mock_archive_resp.content = create_dummy_zip_bytes()
+
+    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
+
+    # "la il" has no significant words. Should use Pass 2 fallback and succeed!
+    metadata = search_and_fetch_3d_model("la il", "test-sketchfab-token")
+    assert metadata["uid"] == "villa_uid_999"
+
+
+@patch("httpx.Client.get")
+def test_search_relevance_dog_fallback(mock_get: MagicMock) -> None:
+    """Tests dog-style queries where name does not contain significant words but falls back to first downloadable/CC."""
+    # 1. Setup mock search response
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "golden_retriever_uid",
+                "name": "Golden Retriever",
+                "isDownloadable": True,
+                "viewerUrl": "https://sketchfab.com/models/golden_retriever_uid",
+                "user": {
+                    "username": "dog_lover",
+                    "displayName": "Dog Lover"
+                },
+                "license": {
+                    "slug": "by",
+                    "fullName": "CC Attribution"
+                }
+            }
+        ]
+    }
+
+    # 2. Setup mock download link response
+    mock_download_resp = MagicMock()
+    mock_download_resp.status_code = 200
+    mock_download_resp.json.return_value = {
+        "gltf": {
+            "url": "https://s3.amazonaws.com/sketchfab/archives/dog.zip",
+            "size": 1024,
+            "expires": 300
+        }
+    }
+
+    # 3. Setup mock zip archive response
+    mock_archive_resp = MagicMock()
+    mock_archive_resp.status_code = 200
+    mock_archive_resp.content = create_dummy_zip_bytes()
+
+    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
+
+    # Query is "dog", candidate is "Golden Retriever". "dog" is not in "golden retriever" so Pass 1 fails, Pass 2 must fallback.
+    metadata = search_and_fetch_3d_model("dog", "test-sketchfab-token")
+    assert metadata["uid"] == "golden_retriever_uid"
+    assert metadata["title"] == "Golden Retriever"
