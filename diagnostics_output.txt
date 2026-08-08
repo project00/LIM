@@ -1,0 +1,526 @@
+2026-08-08 18:43:30,690 [INFO] httpx: HTTP Request: GET https://api.sketchfab.com/v3/models?q=h2O&downloadable=true&limit=24 "HTTP/1.1 200 OK"
+=================== DAEMON/SERVER DIAGNOSTICS ===================
+
+--- [DIRECT PUBLIC SEARCH API CALL] ---
+FULLY RESOLVED OUTGOING URL: https://api.sketchfab.com/v3/models?q=h2O&downloadable=true&limit=24
+
+--- [TOP-LEVEL METADATA] ---
+{
+    "cursors": {
+        "next": "bz0yNA==",
+        "previous": null
+    },
+    "next": "https://api.sketchfab.com/v3/models?cursor=bz0yNA%3D%3D&downloadable=true&limit=24&q=h2O",
+    "previous": null
+}
+
+--- [RAW JSON FOR FIRST 3 RESULTS (Total results in batch: 24)] ---
+[
+    {
+        "uri": "https://api.sketchfab.com/v3/models/2675f35373ff4854a82cb750b9873b97",
+        "uid": "2675f35373ff4854a82cb750b9873b97",
+        "name": "3D",
+        "staffpickedAt": null,
+        "viewCount": 30,
+        "likeCount": 0,
+        "animationCount": 0,
+        "viewerUrl": "https://sketchfab.com/3d-models/none-2675f35373ff4854a82cb750b9873b97",
+        "embedUrl": "https://sketchfab.com/models/2675f35373ff4854a82cb750b9873b97/embed",
+        "commentCount": 0,
+        "isDownloadable": true,
+        "publishedAt": "2022-12-13T19:41:10.344837",
+        "tags": [],
+        "categories": [],
+        "thumbnails": {
+            "images": [
+                {
+                    "uid": "7719c97744d34f20b8170797e63cea2c",
+                    "size": 5925,
+                    "width": 448,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/448.jpg",
+                    "height": 280
+                },
+                {
+                    "uid": "a6b20474be7c402db8f8a5a6b9ff4730",
+                    "size": 2275,
+                    "width": 200,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/200x200.jpg",
+                    "height": 200
+                },
+                {
+                    "uid": "98095b18341b4f49affb313ad9843d70",
+                    "size": 841,
+                    "width": 100,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/100x100.jpg",
+                    "height": 100
+                },
+                {
+                    "uid": "af9d9afad4f1427a8a6e68dffa18c236",
+                    "size": 421,
+                    "width": 50,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/50x50.jpg",
+                    "height": 50
+                },
+                {
+                    "uid": "b0855968e7eb4421b1d57761d0f2e2f1",
+                    "size": 12257,
+                    "width": 640,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/640.jpg",
+                    "height": 400
+                },
+                {
+                    "uid": "4cfc787dbb4a4a0190430bca9721c6cf",
+                    "size": 28643,
+                    "width": 1024,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/1024.jpg",
+                    "height": 640
+                },
+                {
+                    "uid": "bdbd1b7885db45ba959aede0fd468199",
+                    "size": 21153,
+                    "width": 854,
+                    "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/854.jpg",
+                    "height": 534
+                }
+            ]
+        },
+        "user": {
+            "uid": "e28f97fca3ba405b9b6404fb32f03543",
+            "username": "Vinicius.Farias",
+            "displayName": "Vinicius.Farias",
+            "profileUrl": "https://sketchfab.com/Vinicius.Farias",
+            "account": "basic",
+            "avatar": {
+                "uri": "https://api.sketchfab.com/v3/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f",
+                "images": [
+                    {
+                        "size": 731,
+                        "width": 32,
+                        "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/f07fb0b7cae34eb0815bbf1dffe3f953.jpeg",
+                        "height": 32
+                    },
+                    {
+                        "size": 1099,
+                        "width": 48,
+                        "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/db2c4873433441a2a4451185a556cd05.jpeg",
+                        "height": 48
+                    },
+                    {
+                        "size": 2623,
+                        "width": 90,
+                        "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/a7f8e8b82aeb431ca2ed0399d299fbbe.jpeg",
+                        "height": 90
+                    },
+                    {
+                        "size": 3105,
+                        "width": 100,
+                        "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/25b7ae07dadc47b1965022b978bbe055.jpeg",
+                        "height": 100
+                    }
+                ]
+            },
+            "uri": "https://api.sketchfab.com/v3/users/e28f97fca3ba405b9b6404fb32f03543"
+        },
+        "description": "",
+        "faceCount": 8046,
+        "createdAt": "2022-12-13T19:39:54.720961",
+        "vertexCount": 3053,
+        "isAgeRestricted": false,
+        "soundCount": 0,
+        "isProtected": false,
+        "license": {
+            "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
+            "label": "CC Attribution"
+        },
+        "price": null,
+        "archives": {
+            "glb": {
+                "textureCount": 0,
+                "size": 304100,
+                "type": "glb",
+                "textureMaxResolution": 0,
+                "faceCount": 3510,
+                "vertexCount": 6358
+            },
+            "gltf": {
+                "textureCount": 0,
+                "size": 35823,
+                "type": "gltf",
+                "textureMaxResolution": 0,
+                "faceCount": 3510,
+                "vertexCount": 6358
+            },
+            "source": {
+                "textureCount": null,
+                "size": 1653718,
+                "type": "source",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            },
+            "usdz": {
+                "textureCount": null,
+                "size": 166657,
+                "type": "usdz",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            }
+        }
+    },
+    {
+        "uri": "https://api.sketchfab.com/v3/models/b2fd5501ed21496a9b57c8713fd1d464",
+        "uid": "b2fd5501ed21496a9b57c8713fd1d464",
+        "name": "FAN Saint-Orens de Gameville - Arthur",
+        "staffpickedAt": null,
+        "viewCount": 53,
+        "likeCount": 0,
+        "animationCount": 0,
+        "viewerUrl": "https://sketchfab.com/3d-models/none-b2fd5501ed21496a9b57c8713fd1d464",
+        "embedUrl": "https://sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/embed",
+        "commentCount": 0,
+        "isDownloadable": true,
+        "publishedAt": "2018-05-28T18:50:08.214396",
+        "tags": [
+            {
+                "name": "arthur",
+                "slug": "arthur",
+                "uri": "https://api.sketchfab.com/v3/tags/arthur"
+            },
+            {
+                "name": "fan",
+                "slug": "fan",
+                "uri": "https://api.sketchfab.com/v3/tags/fan"
+            }
+        ],
+        "categories": [],
+        "thumbnails": {
+            "images": [
+                {
+                    "uid": "78957f7612d94dbe867b90b92de74ab4",
+                    "size": 55441,
+                    "width": 1920,
+                    "url": "https://media.sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/thumbnails/66386920c1c0498fa014aeba8a4347f2/93a554e2fcec44c08142c1dafd96a3b2.jpeg",
+                    "height": 1080
+                },
+                {
+                    "uid": "76c17013177a417caa295a46f515c507",
+                    "size": 20254,
+                    "width": 1024,
+                    "url": "https://media.sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/thumbnails/66386920c1c0498fa014aeba8a4347f2/0632f76587f4446cb79b5ffb2ebb64dd.jpeg",
+                    "height": 576
+                },
+                {
+                    "uid": "2d3d87e891bf435a88bba38a0cba6e76",
+                    "size": 12818,
+                    "width": 720,
+                    "url": "https://media.sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/thumbnails/66386920c1c0498fa014aeba8a4347f2/49f125f2abd64fbab14e0d41889fd37d.jpeg",
+                    "height": 405
+                },
+                {
+                    "uid": "c4ba4deb2c8347c49e1f77ac5b00ab53",
+                    "size": 3361,
+                    "width": 256,
+                    "url": "https://media.sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/thumbnails/66386920c1c0498fa014aeba8a4347f2/6d328612ba1b4431875e7f3736f4ec54.jpeg",
+                    "height": 144
+                },
+                {
+                    "uid": "60a705512f3f467a858ca429c6da6052",
+                    "size": 793,
+                    "width": 64,
+                    "url": "https://media.sketchfab.com/models/b2fd5501ed21496a9b57c8713fd1d464/thumbnails/66386920c1c0498fa014aeba8a4347f2/bf77bb11f75d42cda963df28fe600943.jpeg",
+                    "height": 36
+                }
+            ]
+        },
+        "user": {
+            "uid": "50bf74f503fa4e16b8018f0df6ee3909",
+            "username": "philippefaure",
+            "displayName": "Philippe Faure",
+            "profileUrl": "https://sketchfab.com/philippefaure",
+            "account": "basic",
+            "avatar": {
+                "uri": "https://api.sketchfab.com/v3/avatars/98b98c37dfd748e99b32662f7ab66f84",
+                "images": [
+                    {
+                        "size": 717,
+                        "width": 32,
+                        "url": "https://media.sketchfab.com/avatars/98b98c37dfd748e99b32662f7ab66f84/bcfa190b4bf849fdb5d8ed0b87fdb31d.jpeg",
+                        "height": 32
+                    },
+                    {
+                        "size": 1159,
+                        "width": 48,
+                        "url": "https://media.sketchfab.com/avatars/98b98c37dfd748e99b32662f7ab66f84/ba52fab7754b4f0ab35ce7572b113936.jpeg",
+                        "height": 48
+                    },
+                    {
+                        "size": 3347,
+                        "width": 90,
+                        "url": "https://media.sketchfab.com/avatars/98b98c37dfd748e99b32662f7ab66f84/9763e9b6fbd94872863580e879233824.jpeg",
+                        "height": 90
+                    },
+                    {
+                        "size": 4139,
+                        "width": 100,
+                        "url": "https://media.sketchfab.com/avatars/98b98c37dfd748e99b32662f7ab66f84/0cf17916aa154870b7ca0d45e20ca754.jpeg",
+                        "height": 100
+                    }
+                ]
+            },
+            "uri": "https://api.sketchfab.com/v3/users/50bf74f503fa4e16b8018f0df6ee3909"
+        },
+        "description": "",
+        "faceCount": 679388,
+        "createdAt": "2018-05-28T18:46:38.286072",
+        "vertexCount": 339502,
+        "isAgeRestricted": false,
+        "soundCount": 0,
+        "isProtected": false,
+        "license": {
+            "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
+            "label": "CC Attribution"
+        },
+        "price": null,
+        "archives": {
+            "glb": {
+                "textureCount": 0,
+                "size": 22882412,
+                "type": "glb",
+                "textureMaxResolution": 0,
+                "faceCount": 679384,
+                "vertexCount": 347988
+            },
+            "gltf": {
+                "textureCount": 0,
+                "size": 8434333,
+                "type": "gltf",
+                "textureMaxResolution": 0,
+                "faceCount": 679384,
+                "vertexCount": 347988
+            },
+            "source": {
+                "textureCount": null,
+                "size": 39657503,
+                "type": "source",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            },
+            "usdz": {
+                "textureCount": null,
+                "size": 9136175,
+                "type": "usdz",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            }
+        }
+    },
+    {
+        "uri": "https://api.sketchfab.com/v3/models/4e507842d3bf4bf6a5c93b598dc1bc37",
+        "uid": "4e507842d3bf4bf6a5c93b598dc1bc37",
+        "name": "20.192",
+        "staffpickedAt": null,
+        "viewCount": 60,
+        "likeCount": 0,
+        "animationCount": 0,
+        "viewerUrl": "https://sketchfab.com/3d-models/none-4e507842d3bf4bf6a5c93b598dc1bc37",
+        "embedUrl": "https://sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/embed",
+        "commentCount": 0,
+        "isDownloadable": true,
+        "publishedAt": "2020-05-18T11:57:16.256194",
+        "tags": [
+            {
+                "name": "pamir",
+                "slug": "pamir",
+                "uri": "https://api.sketchfab.com/v3/tags/pamir"
+            }
+        ],
+        "categories": [],
+        "thumbnails": {
+            "images": [
+                {
+                    "uid": "f64ee537b3954cb988727ecd6dfd5129",
+                    "size": 93172,
+                    "width": 1920,
+                    "url": "https://media.sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/thumbnails/94c532de58c54eafb3474b70bcef0486/d9ddcd300ea345ecb582797965f76f04.jpeg",
+                    "height": 1080
+                },
+                {
+                    "uid": "6cf6e1a8192140af99cf043e1f718f0e",
+                    "size": 29909,
+                    "width": 1024,
+                    "url": "https://media.sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/thumbnails/94c532de58c54eafb3474b70bcef0486/5e63909970da4761b9f278f62db86d82.jpeg",
+                    "height": 576
+                },
+                {
+                    "uid": "7ac7010e8fba48b58df94c3cffaad99a",
+                    "size": 16567,
+                    "width": 720,
+                    "url": "https://media.sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/thumbnails/94c532de58c54eafb3474b70bcef0486/ee3cfee90eff4b8d9d732e2eb1b7519c.jpeg",
+                    "height": 405
+                },
+                {
+                    "uid": "4e23b8952a0f42f08662c9638f4ac0f6",
+                    "size": 2752,
+                    "width": 256,
+                    "url": "https://media.sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/thumbnails/94c532de58c54eafb3474b70bcef0486/baaa212f04d746e68abc6bf289a99ac9.jpeg",
+                    "height": 144
+                },
+                {
+                    "uid": "9d433b409383404e990cc7326288ccb2",
+                    "size": 508,
+                    "width": 64,
+                    "url": "https://media.sketchfab.com/models/4e507842d3bf4bf6a5c93b598dc1bc37/thumbnails/94c532de58c54eafb3474b70bcef0486/651cbf7b59db4536aaf14cedb9fcba74.jpeg",
+                    "height": 36
+                }
+            ]
+        },
+        "user": {
+            "uid": "9c5c492ad7674bfe9b2f94b77e9a97c0",
+            "username": "romar1",
+            "displayName": "ROMAR",
+            "profileUrl": "https://sketchfab.com/romar1",
+            "account": "basic",
+            "avatar": {
+                "uri": "https://api.sketchfab.com/v3/avatars/8fba6d1559cf4367a691b3f822a013fb",
+                "images": [
+                    {
+                        "size": 1140,
+                        "width": 32,
+                        "url": "https://media.sketchfab.com/avatars/8fba6d1559cf4367a691b3f822a013fb/ffa8f07796ea45038553b8f8eba681c2.png",
+                        "height": 32
+                    },
+                    {
+                        "size": 1987,
+                        "width": 48,
+                        "url": "https://media.sketchfab.com/avatars/8fba6d1559cf4367a691b3f822a013fb/5d21aaeeec6046bfa75d3e7793cfa165.png",
+                        "height": 48
+                    },
+                    {
+                        "size": 4526,
+                        "width": 90,
+                        "url": "https://media.sketchfab.com/avatars/8fba6d1559cf4367a691b3f822a013fb/76c7e666717a458985247f1308242fcc.png",
+                        "height": 90
+                    },
+                    {
+                        "size": 5076,
+                        "width": 100,
+                        "url": "https://media.sketchfab.com/avatars/8fba6d1559cf4367a691b3f822a013fb/2b8aeb9f99f04b36948b92fe8dee8a93.png",
+                        "height": 100
+                    }
+                ]
+            },
+            "uri": "https://api.sketchfab.com/v3/users/9c5c492ad7674bfe9b2f94b77e9a97c0"
+        },
+        "description": "Building exported from Pamir.",
+        "faceCount": 76110,
+        "createdAt": "2020-05-18T11:47:19.028258",
+        "vertexCount": 58162,
+        "isAgeRestricted": false,
+        "soundCount": 0,
+        "isProtected": false,
+        "license": {
+            "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
+            "label": "CC Attribution"
+        },
+        "price": null,
+        "archives": {
+            "glb": {
+                "textureCount": 6,
+                "size": 4474272,
+                "type": "glb",
+                "textureMaxResolution": 1024,
+                "faceCount": 76110,
+                "vertexCount": 100809
+            },
+            "gltf": {
+                "textureCount": 6,
+                "size": 988681,
+                "type": "gltf",
+                "textureMaxResolution": 1024,
+                "faceCount": 76110,
+                "vertexCount": 100809
+            },
+            "source": {
+                "textureCount": null,
+                "size": 1885862,
+                "type": "source",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            },
+            "usdz": {
+                "textureCount": null,
+                "size": 3742401,
+                "type": "usdz",
+                "textureMaxResolution": null,
+                "faceCount": null,
+                "vertexCount": null
+            }
+        }
+    }
+]2026-08-08 18:43:30,694 [INFO] server_model_service: Searching Sketchfab for 3D model query: 'h2O'
+2026-08-08 18:43:30,695 [INFO] server_model_service: Sending search query to Sketchfab. URL: 'https://api.sketchfab.com/v3/models', query params: {'q': 'h2O', 'downloadable': 'true', 'limit': 24}. Authorization header: EMPTY
+2026-08-08 18:43:30,772 [INFO] httpx: HTTP Request: GET https://api.sketchfab.com/v3/models?q=h2O&downloadable=true&limit=24 "HTTP/1.1 200 OK"
+2026-08-08 18:43:30,773 [INFO] server_model_service: Received response from Sketchfab Search API. Status code: 200
+2026-08-08 18:43:30,773 [INFO] server_model_service: RESOLVED OUTGOING URL: https://api.sketchfab.com/v3/models?q=h2O&downloadable=true&limit=24
+2026-08-08 18:43:30,776 [INFO] server_model_service: RAW JSON RESPONSE BODY (TRUNCATED): {"cursors": {"next": "bz0yNA==", "previous": null}, "next": "https://api.sketchfab.com/v3/models?cursor=bz0yNA%3D%3D&downloadable=true&limit=24&q=h2O", "previous": null, "results": [{"uri": "https://api.sketchfab.com/v3/models/2675f35373ff4854a82cb750b9873b97", "uid": "2675f35373ff4854a82cb750b9873b97", "name": "3D", "staffpickedAt": null, "viewCount": 30, "likeCount": 0, "animationCount": 0, "viewerUrl": "https://sketchfab.com/3d-models/none-2675f35373ff4854a82cb750b9873b97", "embedUrl": "https://sketchfab.com/models/2675f35373ff4854a82cb750b9873b97/embed", "commentCount": 0, "isDownloadable": true, "publishedAt": "2022-12-13T19:41:10.344837", "tags": [], "categories": [], "thumbnails": {"images": [{"uid": "7719c97744d34f20b8170797e63cea2c", "size": 5925, "width": 448, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/448.jpg", "height": 280}, {"uid": "a6b20474be7c402db8f8a5a6b9ff4730", "size": 2275, "width": 200, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/200x200.jpg", "height": 200}, {"uid": "98095b18341b4f49affb313ad9843d70", "size": 841, "width": 100, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/100x100.jpg", "height": 100}, {"uid": "af9d9afad4f1427a8a6e68dffa18c236", "size": 421, "width": 50, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/50x50.jpg", "height": 50}, {"uid": "b0855968e7eb4421b1d57761d0f2e2f1", "size": 12257, "width": 640, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/640.jpg", "height": 400}, {"uid": "4cfc787dbb4a4a0190430bca9721c6cf", "size": 28643, "width": 1024, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/1024.jpg", "height": 640}, {"uid": "bdbd1b7885db45ba959aede0fd468199", "size": 21153, "width": 854, "url": "https://media.sketchfab.com/thumbnails/4c57687b657445e1b46c83b35e494ad4/854.jpg", "height": 534}]}, "user": {"uid": "e28f97fca3ba405b9b6404fb32f03543", "username": "Vinicius.Farias", "displayName": "Vinicius.Farias", "profileUrl": "https://sketchfab.com/Vinicius.Farias", "account": "basic", "avatar": {"uri": "https://api.sketchfab.com/v3/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f", "images": [{"size": 731, "width": 32, "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/f07fb0b7cae34eb0815bbf1dffe3f953.jpeg", "height": 32}, {"size": 1099, "width": 48, "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/db2c4873433441a2a4451185a556cd05.jpeg", "height": 48}, {"size": 2623, "width": 90, "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/a7f8e8b82aeb431ca2ed0399d299fbbe.jpeg", "height": 90}, {"size": 3105, "width": 100, "url": "https://media.sketchfab.com/avatars/3d565e6aa8a04f539b8c7cfbc511dc4f/25b7ae07dadc47b1965022b978bbe055.jpeg", "height": 100}]}, "uri": "https://api.sketchfab.com/v3/users/e28f97fca3ba405b9b6404fb32f03543"}, "description": "
+2026-08-08 18:43:30,776 [INFO] server_model_service: TOP-LEVEL METADATA: {"cursors": {"next": "bz0yNA==", "previous": null}, "next": "https://api.sketchfab.com/v3/models?cursor=bz0yNA%3D%3D&downloadable=true&limit=24&q=h2O", "previous": null}
+2026-08-08 18:43:30,777 [INFO] server_model_service: Sketchfab search returned 24 raw candidate results.
+2026-08-08 18:43:30,777 [INFO] server_model_service: Significant words for query 'h2O': ['h2o']
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #1: Name='3D', UID='2675f35373ff4854a82cb750b9873b97', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate '3D' (UID: 2675f35373ff4854a82cb750b9873b97) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #2: Name='FAN Saint-Orens de Gameville - Arthur', UID='b2fd5501ed21496a9b57c8713fd1d464', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'FAN Saint-Orens de Gameville - Arthur' (UID: b2fd5501ed21496a9b57c8713fd1d464) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #3: Name='20.192', UID='4e507842d3bf4bf6a5c93b598dc1bc37', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate '20.192' (UID: 4e507842d3bf4bf6a5c93b598dc1bc37) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #4: Name='Model 14', UID='8f2dba5a81564f7dac243e4b3501840d', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'Model 14' (UID: 8f2dba5a81564f7dac243e4b3501840d) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #5: Name='GrasseThemedProps', UID='e45c56f57959459ea12769c1503a28cb', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'GrasseThemedProps' (UID: e45c56f57959459ea12769c1503a28cb) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #6: Name='013 - Hwy 28 Woodsview (North)', UID='420a838486cf40929ccaedf54745f6f9', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate '013 - Hwy 28 Woodsview (North)' (UID: 420a838486cf40929ccaedf54745f6f9) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #7: Name='Thu, 27 Feb 2020 19:22:42', UID='705ad286bdc3461b8cfc4274ebf9e5b0', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'Thu, 27 Feb 2020 19:22:42' (UID: 705ad286bdc3461b8cfc4274ebf9e5b0) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #8: Name='3D Estrutura SPITY EMPREENDIMENTOS', UID='f7e24747a568444093c8c53425720d59', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate '3D Estrutura SPITY EMPREENDIMENTOS' (UID: f7e24747a568444093c8c53425720d59) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #9: Name='Draft Punk HW5 Redone', UID='4cef6e9df98241aa8e9c8a98bc57e3e3', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'Draft Punk HW5 Redone' (UID: 4cef6e9df98241aa8e9c8a98bc57e3e3) rejected: not CC
+2026-08-08 18:43:30,777 [INFO] server_model_service: Evaluating raw candidate #10: Name='Small Kitchen', UID='f47d4250865f41d0a1d1ff8938bbafa5', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,777 [INFO] server_model_service: Candidate 'Small Kitchen' (UID: f47d4250865f41d0a1d1ff8938bbafa5) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #11: Name='stylish rock game assets', UID='b3f5e6dd0bfa42bc88514cc8b9098f18', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'stylish rock game assets' (UID: b3f5e6dd0bfa42bc88514cc8b9098f18) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #12: Name='59bd51acab349', UID='a8a5f92bf4fa4a77a60d31122fe29a13', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate '59bd51acab349' (UID: a8a5f92bf4fa4a77a60d31122fe29a13) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #13: Name='Objeto- Tecnicas audiovisuales Zantifler', UID='0748fb88502146788ab627e35401c13e', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Objeto- Tecnicas audiovisuales Zantifler' (UID: 0748fb88502146788ab627e35401c13e) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #14: Name='Hui-Chuang_Hung_033055717_wk5b_block', UID='5e4b71d418c8494d81c062befd318344', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Hui-Chuang_Hung_033055717_wk5b_block' (UID: 5e4b71d418c8494d81c062befd318344) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #15: Name='Vrubel 0213 Chair05', UID='1c48f9936c52469eaf18dde78b5afb71', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Vrubel 0213 Chair05' (UID: 1c48f9936c52469eaf18dde78b5afb71) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #16: Name='callen dobilas 6in oh', UID='69b089d4fa234bb2a936e1cf8850c27f', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'callen dobilas 6in oh' (UID: 69b089d4fa234bb2a936e1cf8850c27f) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #17: Name='M Spencer Preliminary Model', UID='48ccfb3f66da489c95c05d902ee683c3', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'M Spencer Preliminary Model' (UID: 48ccfb3f66da489c95c05d902ee683c3) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #18: Name='1', UID='88f012eed3e04497abf90bc3d7cad462', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate '1' (UID: 88f012eed3e04497abf90bc3d7cad462) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #19: Name='Maja Fager', UID='88617ce6195440ec97f931a10155afc8', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Maja Fager' (UID: 88617ce6195440ec97f931a10155afc8) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #20: Name='19.692', UID='189cd1d00c7041029defdd6c748a3c5a', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate '19.692' (UID: 189cd1d00c7041029defdd6c748a3c5a) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #21: Name='Maison Rocroi 13 05 19 test 2', UID='1b77fb74aac94a48ad5c7d3ad8bd3d01', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Maison Rocroi 13 05 19 test 2' (UID: 1b77fb74aac94a48ad5c7d3ad8bd3d01) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #22: Name='dpto textura mejorada png', UID='6585a86e1f814e2cbc0cc981817f7de4', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'dpto textura mejorada png' (UID: 6585a86e1f814e2cbc0cc981817f7de4) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #23: Name='Spider', UID='843b39f48afa4acb95f18ec77edb5dcc', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'Spider' (UID: 843b39f48afa4acb95f18ec77edb5dcc) rejected: not CC
+2026-08-08 18:43:30,778 [INFO] server_model_service: Evaluating raw candidate #24: Name='sketchfab_m2carbine', UID='8494039cacc04ac7b3fab314a2b124c1', isDownloadable=True, license_slug='no-slug'
+2026-08-08 18:43:30,778 [INFO] server_model_service: Candidate 'sketchfab_m2carbine' (UID: 8494039cacc04ac7b3fab314a2b124c1) rejected: not CC
+2026-08-08 18:43:30,778 [WARNING] server_model_service: No Sketchfab search results passed the downloadable and CC filter for query: 'h2O'
+
+
+--- [TRIGGERING SERVICES.MODEL_SERVICE PIPELINE] ---
+
+Service pipeline stopped/completed: Nessun modello 3D trovato per la ricerca: 'h2O'
