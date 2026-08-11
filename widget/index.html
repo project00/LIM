@@ -49,6 +49,11 @@
         /* Content Display Area */
         #output-container { background: #181825; padding: 10px; border-radius: 8px; border: 1px solid #313244; min-height: 320px; max-height: 420px; overflow-y: auto; }
         model-viewer { width: 100%; height: 300px; }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -159,6 +164,11 @@
                     return;
                 }
 
+                if (data.action === "concept_map_status") {
+                    handleConceptMapStatus(data);
+                    return;
+                }
+
                 if (data.type === "system_warning") {
                     setSystemState(SYSTEM_STATES.DEGRADED, data.message);
                     return;
@@ -229,6 +239,34 @@
             }
 
             checkSubtitleConnectionState();
+        }
+
+        function handleConceptMapStatus(data) {
+            if (!data) return;
+            const out = document.getElementById("output");
+            if (!out) return;
+
+            if (data.status === "loading") {
+                out.innerHTML = `
+                    <div id="concept-map-loading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; gap: 15px; color: #cdd6f4; text-align: center;">
+                        <div style="width: 40px; height: 40px; border: 4px solid #313244; border-top-color: #a6e3a1; border-radius: 50%; animation: spin 1s linear infinite; box-sizing: border-box;"></div>
+                        <span style="font-weight: bold; font-size: 14px;">${escapeHTML(data.message)}</span>
+                    </div>
+                `;
+            } else if (data.status === "error") {
+                out.innerHTML = `
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; gap: 10px; color: #f38ba8; text-align: center;">
+                        <span style="font-size: 24px;">⚠️</span>
+                        <span style="font-weight: bold; font-size: 14px;">Errore nella generazione della mappa</span>
+                        <p style="font-size: 12px; margin: 0; color: #a6adc8;">${escapeHTML(data.message)}</p>
+                    </div>
+                `;
+            } else if (data.status === "completed") {
+                const loadingEl = document.getElementById("concept-map-loading");
+                if (loadingEl) {
+                    loadingEl.remove();
+                }
+            }
         }
 
         function renderData(data) {

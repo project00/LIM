@@ -798,7 +798,7 @@ async def websocket_endpoint(websocket: WebSocket):
     transcription_session = TranscriptionSession()
 
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)
+        timeout=httpx.Timeout(300.0, connect=5.0)
     ) as http_client:
         try:
             while True:
@@ -1079,21 +1079,58 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
                         req_headers.update(custom_headers)
 
+                        if action == "concept_map":
+                            await websocket.send_text(json.dumps({
+                                "action": "concept_map_status",
+                                "status": "loading",
+                                "message": "Generazione della mappa in corso..."
+                            }))
+
                         response = await http_client.post(
                             remote_analyze_url, json=payload, headers=req_headers
                         )
                         response.raise_for_status()
                         await send_and_backup(websocket, response.text, backup_path)
 
-                    except (httpx.ConnectError, httpx.TimeoutException):
+                        if action == "concept_map":
+                            await websocket.send_text(json.dumps({
+                                "action": "concept_map_status",
+                                "status": "completed",
+                                "message": "Generazione completata!"
+                            }))
+
+                    except (httpx.ConnectError, httpx.TimeoutException) as te:
                         logger.warning(
                             f"Server remoto irraggiungibile per action: {action}"
                         )
+                        if action == "concept_map":
+                            msg = "Timeout di generazione: il server ha impiegato più di 5 minuti." if isinstance(te, httpx.TimeoutException) else "Impossibile connettersi al server remoto."
+                            await websocket.send_text(json.dumps({
+                                "action": "concept_map_status",
+                                "status": "error",
+                                "message": msg
+                            }))
                         fallback_msg = {
                             "type": "system_warning",
                             "message": "Server remoto offline. Passaggio a Modalità Locale.",
                         }
                         await websocket.send_text(json.dumps(fallback_msg))
+                    except Exception as exc:
+                        logger.error(f"Errore durante l'azione remota: {exc}")
+                        if action == "concept_map":
+                            await websocket.send_text(json.dumps({
+                                "action": "concept_map_status",
+                                "status": "error",
+                                "message": f"Errore durante la generazione della mappa: {str(exc)}"
+                            }))
+                        else:
+                            error_payload = {
+                                "type": "error",
+                                "code": "REMOTE_SERVICE_ERROR",
+                                "action": action,
+                                "message": f"Errore durante l'azione remota: {str(exc)}",
+                            }
+                            await websocket.send_text(json.dumps(error_payload))
 
         except WebSocketDisconnect:
             logger.info("Widget disconnesso.")

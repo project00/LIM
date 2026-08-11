@@ -231,10 +231,21 @@ async def test_remote_reachable_analyze() -> None:
                 "action": "concept_map",
                 "data": {"topic": "apparato circolatorio"}
             }))
+            # Receive loading status
+            status_loading = websocket.receive_json()
+            assert status_loading["action"] == "concept_map_status"
+            assert status_loading["status"] == "loading"
+
+            # Receive the actual concept map data
             response = websocket.receive_json()
             assert response["type"] == "concept_map"
             assert response["source"] == "remote_llm"
             assert "Cuore-->Arterie" in response["mermaid_code"]
+
+            # Receive completed status
+            status_completed = websocket.receive_json()
+            assert status_completed["action"] == "concept_map_status"
+            assert status_completed["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -251,6 +262,18 @@ async def test_remote_timeout_fallback() -> None:
                 "action": "concept_map",
                 "data": {"topic": "apparato circolatorio"}
             }))
+            # Receive loading status
+            status_loading = websocket.receive_json()
+            assert status_loading["action"] == "concept_map_status"
+            assert status_loading["status"] == "loading"
+
+            # Receive error status
+            status_error = websocket.receive_json()
+            assert status_error["action"] == "concept_map_status"
+            assert status_error["status"] == "error"
+            assert "Timeout" in status_error["message"]
+
+            # Receive fallback system warning
             response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
@@ -272,6 +295,18 @@ async def test_remote_connection_error_fallback() -> None:
                 "action": "concept_map",
                 "data": {"topic": "apparato circolatorio"}
             }))
+            # Receive loading status
+            status_loading = websocket.receive_json()
+            assert status_loading["action"] == "concept_map_status"
+            assert status_loading["status"] == "loading"
+
+            # Receive error status
+            status_error = websocket.receive_json()
+            assert status_error["action"] == "concept_map_status"
+            assert status_error["status"] == "error"
+            assert "connettersi" in status_error["message"]
+
+            # Receive fallback system warning
             response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
