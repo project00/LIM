@@ -91,6 +91,10 @@ def test_search_and_fetch_3d_model_cache_miss_success(mock_get: MagicMock) -> No
     # Run the service with explicit sketchfab_token argument
     metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     # Assert correct metadata returned
     assert metadata["uid"] == "model_uid_123"
     assert metadata["title"] == "Water Molecule H2O"
@@ -143,6 +147,10 @@ def test_search_and_fetch_3d_model_cache_hit_skips_download(mock_get: MagicMock)
     # Run service with explicit sketchfab_token argument
     metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     # Assert metadata
     assert metadata["uid"] == "model_uid_123"
     assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
@@ -164,6 +172,10 @@ def test_search_no_results_raises_value_error(mock_get: MagicMock) -> None:
     with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
         search_and_fetch_3d_model("impossible_search_query_123", "test-sketchfab-token")
 
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
 
 @patch("httpx.Client.get")
 def test_search_api_failure_raises_runtime_error(mock_get: MagicMock) -> None:
@@ -175,6 +187,10 @@ def test_search_api_failure_raises_runtime_error(mock_get: MagicMock) -> None:
 
     with pytest.raises(RuntimeError, match="Sketchfab Search API failure"):
         search_and_fetch_3d_model("H2O", "test-sketchfab-token")
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
 
 @patch("httpx.Client.get")
@@ -199,6 +215,10 @@ def test_api_401_auth_error_produces_remote_service_error(mock_get: MagicMock) -
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
     data = resp.json()
     assert data["type"] == "error"
@@ -228,6 +248,10 @@ def test_api_429_rate_limit_produces_remote_service_error(mock_get: MagicMock) -
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
     data = resp.json()
     assert data["type"] == "error"
@@ -285,6 +309,10 @@ def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: Magi
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
 
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_sketchfab_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     data = resp.json()
     assert data["type"] == "model_3d"
     assert data["source"] == "remote_index"
@@ -338,6 +366,10 @@ def test_api_load_3d_model_not_found(mock_sketchfab_get: MagicMock) -> None:
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_sketchfab_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
     data = resp.json()
     assert data["type"] == "error"
@@ -434,6 +466,10 @@ def test_search_relevance_h2o_bug_resolved(mock_get: MagicMock) -> None:
     # Run the service for query "H2O"
     metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
 
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     # Assert that the genuinely relevant H2O model was selected, not the villa
     assert metadata["uid"] == "h2o_uid_111"
     assert metadata["title"] == "Water Molecule (H2O)"
@@ -473,6 +509,10 @@ def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
 
     with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
         search_and_fetch_3d_model("H2O", "test-sketchfab-token")
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
 
 @patch("httpx.Client.get")
@@ -520,6 +560,11 @@ def test_search_all_stopwords_query_fallback(mock_get: MagicMock) -> None:
 
     # "la il" has no significant words. Should use Pass 2 fallback and succeed!
     metadata = search_and_fetch_3d_model("la il", "test-sketchfab-token")
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     assert metadata["uid"] == "villa_uid_999"
 
 
@@ -568,5 +613,10 @@ def test_search_relevance_dog_fallback(mock_get: MagicMock) -> None:
 
     # Query is "dog", candidate is "Golden Retriever". "dog" is not in "golden retriever" so Pass 1 fails, Pass 2 must fallback.
     metadata = search_and_fetch_3d_model("dog", "test-sketchfab-token")
+
+    # Assert "downloadable" is not in the search parameters
+    _, first_call_kwargs = mock_get.call_args_list[0]
+    assert "downloadable" not in first_call_kwargs.get("params", {})
+
     assert metadata["uid"] == "golden_retriever_uid"
     assert metadata["title"] == "Golden Retriever"

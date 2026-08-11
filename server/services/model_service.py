@@ -108,7 +108,6 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
     # Increased limit parameter to 24 (reasonable increase from 10 to give a larger candidate pool)
     params = {
         "q": query,
-        "downloadable": "true",
         "limit": 24
     }
 
