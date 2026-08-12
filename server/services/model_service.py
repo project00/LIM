@@ -6,8 +6,8 @@ Design Note:
     from Sketchfab's Download API. It fails fast on startup if the required
     SKETCHFAB_ACCESS_TOKEN environment variable is not configured. It filters models
     to prefer those explicitly marked downloadable and under a Creative Commons (CC)
-    license (selection heuristic: first downloadable and CC-licensed result). It caches
-    models in the local file system (server/model_cache/<uid>/) and avoids repeated downloads.
+    license. It caches models in the local file system (server/model_cache/<uid>/)
+    and avoids repeated downloads.
 """
 
 import logging
@@ -15,6 +15,7 @@ import os
 import zipfile
 import io
 import shutil
+import json
 import httpx
 
 logger = logging.getLogger("server_model_service")
@@ -71,48 +72,60 @@ def is_cc_licensed(license_data: dict) -> bool:
     return False
 
 
-def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
+def get_thumbnail_url(thumbnails_dict: dict) -> str | None:
     """
-    Searches Sketchfab for query, filters for downloadable + CC models, downloads the ZIP,
-    unzips to model_cache, and returns metadata details.
+    Helper to extract a reasonably-sized thumbnail URL from Sketchfab thumbnails data structure.
+    Prefers a width closest to 256px for a small grid card.
+    """
+    if not thumbnails_dict or "images" not in thumbnails_dict:
+        return None
+    images = thumbnails_dict.get("images", [])
+    if not images:
+        return None
+    # Sort images by absolute difference from 256
+    sorted_images = sorted(images, key=lambda x: abs(x.get("width", 0) - 256))
+    if sorted_images:
+        return sorted_images[0].get("url")
+    return None
+
+
+def search_3d_models(query: str, sketchfab_token: str) -> list[dict]:
+    """
+    Searches Sketchfab for candidates, filters for downloadable + CC models, and returns
+    up to 8 candidates sorted by query match.
 
     Args:
         query: The search keyword (e.g. "molecola acqua H2O").
         sketchfab_token: The Sketchfab V3 API token to use.
 
     Returns:
-        Dictionary containing metadata conforming to docs/api-contract.md §1 load_3d_model:
-        {
-            "uid": str,
-            "title": str,
-            "model_url": str,
-            "attribution": {
+        A list of up to 8 dicts containing candidates conforming to API contract:
+        [
+            {
+                "uid": str,
+                "name": str,
+                "thumbnail_url": str | None,
                 "author": str,
-                "license": str,
-                "source_url": str
+                "license": str
             }
-        }
+        ]
 
     Raises:
-        ValueError: if model is not found ("MODEL_NOT_FOUND").
-        RuntimeError: if an external API call fails ("REMOTE_SERVICE_ERROR").
+        ValueError: if no candidates are found ("MODEL_NOT_FOUND").
+        RuntimeError: if API call fails.
     """
-    logger.info("Searching Sketchfab for 3D model query: '%s'", query)
+    logger.info("Searching Sketchfab for 3D model candidates: '%s'", query)
 
     if not sketchfab_token:
         logger.error("Sketchfab access token is empty or missing.")
         raise RuntimeError("Sketchfab access token is not configured. Request cannot be processed.")
 
-    # 1. Search Sketchfab
     search_url = "https://api.sketchfab.com/v3/models"
-    # Increased limit parameter to 24 (reasonable increase from 10 to give a larger candidate pool)
     params = {
         "q": query,
-        "limit": 24,
-        "downloadable": "true"
+        "limit": 24
     }
 
-    # Redact token, but explicitly log if Authorization header is present/empty
     auth_headers = get_auth_headers(sketchfab_token)
     auth_header_val = auth_headers.get("Authorization", "")
     auth_present = "PRESENT" if auth_header_val.strip() else "EMPTY"
@@ -125,7 +138,6 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
     )
 
     try:
-        # Use sync HTTP client following the requests-like model for ease of integration
         with httpx.Client(timeout=10.0) as client:
             response = client.get(search_url, params=params, headers=auth_headers)
 
@@ -151,76 +163,149 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         logger.warning("No Sketchfab search results for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
-    significant_words = extract_significant_words(query)
-    logger.info("Significant words for query '%s': %s", query, significant_words)
-
-    # Pre-filter: collect all models that are explicitly downloadable
-    downloadable_candidates = []
+    # Hard filter for downloadable + CC candidates
+    downloadable_cc_candidates = []
     for idx, model in enumerate(raw_results):
         m_name = model.get("name", "Modello Sconosciuto")
         m_uid = model.get("uid", "no-uid")
         is_dl = model.get("isDownloadable")
+        license_info = model.get("license")
+        is_cc = is_cc_licensed(license_info)
 
         logger.info(
-            "Evaluating raw candidate #%d: Name='%s', UID='%s', isDownloadable=%s",
+            "Evaluating raw candidate #%d: Name='%s', UID='%s', isDownloadable=%s, is_cc=%s",
             idx + 1,
             m_name,
             m_uid,
-            is_dl
+            is_dl,
+            is_cc
         )
 
-        if not is_dl:
-            logger.info("Candidate '%s' (UID: %s) rejected: not downloadable", m_name, m_uid)
+        if not is_dl or not is_cc:
+            logger.info("Candidate '%s' (UID: %s) rejected: not downloadable or not CC", m_name, m_uid)
             continue
 
-        downloadable_candidates.append(model)
+        downloadable_cc_candidates.append(model)
 
-    if not downloadable_candidates:
-        logger.warning("No Sketchfab search results passed the downloadable filter for query: '%s'", query)
+    if not downloadable_cc_candidates:
+        logger.warning("No Sketchfab search results passed the downloadable+CC filters for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
-    selected_model = None
+    # Sort preference: matching significant query words first, then the rest
+    significant_words = extract_significant_words(query)
+    logger.info("Significant words for query '%s': %s", query, significant_words)
 
-    # Pass 1: find first model in downloadable_candidates whose name contains at least one significant query word
-    for model in downloadable_candidates:
-        m_name = model.get("name", "Modello Sconosciuto")
-        m_uid = model.get("uid", "no-uid")
-        model_name_lower = m_name.lower()
-
-        if any(word in model_name_lower for word in significant_words):
-            logger.info("Pass 1 match: Candidate '%s' (UID: %s) contains significant query word(s) %s", m_name, m_uid, significant_words)
-            selected_model = model
-            break
+    matching = []
+    non_matching = []
+    for model in downloadable_cc_candidates:
+        m_name_lower = model.get("name", "Modello Sconosciuto").lower()
+        if any(word in m_name_lower for word in significant_words):
+            matching.append(model)
         else:
-            logger.info("Pass 1 skip: Candidate '%s' (UID: %s) does not match significant query words %s", m_name, m_uid, significant_words)
+            non_matching.append(model)
 
-    # Pass 2: Fallback to the first downloadable candidate if Pass 1 found nothing
-    if not selected_model:
-        fallback_cand = downloadable_candidates[0]
-        fallback_name = fallback_cand.get("name", "Modello Sconosciuto")
-        fallback_uid = fallback_cand.get("uid", "no-uid")
-        logger.warning(
-            "Nessuna corrispondenza esatta sul nome per '%s' — uso il primo risultato scaricabile come fallback: '%s' (uid=%s)",
-            query,
-            fallback_name,
-            fallback_uid
-        )
-        selected_model = fallback_cand
+    sorted_candidates = matching + non_matching
+    results = []
 
-    uid = selected_model.get("uid")
-    name = selected_model.get("name", "Modello 3D")
-    author_info = selected_model.get("user", {})
-    author_name = author_info.get("displayName") or author_info.get("username") or "Autore sconosciuto"
-    license_name = (selected_model.get("license") or {}).get("fullName") or "CC Attribution"
-    source_url = selected_model.get("viewerUrl") or f"https://sketchfab.com/models/{uid}"
+    # Map to the API-contract candidate structure
+    for model in sorted_candidates[:8]:
+        uid = model.get("uid")
+        name = model.get("name", "Modello 3D")
+        author_info = model.get("user", {})
+        author_name = author_info.get("displayName") or author_info.get("username") or "Autore sconosciuto"
+        license_name = (model.get("license") or {}).get("fullName") or "CC Attribution"
+        thumbnail_url = get_thumbnail_url(model.get("thumbnails"))
 
-    # 2. Local Caching check
+        results.append({
+            "uid": uid,
+            "name": name,
+            "thumbnail_url": thumbnail_url,
+            "author": author_name,
+            "license": license_name
+        })
+
+    logger.info("Returned %d filtered and sorted candidates.", len(results))
+    return results
+
+
+def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
+    """
+    Downloads, extracts, and caches a 3D model by its known UID, returning its metadata.
+
+    Args:
+        uid: The Sketchfab model UID.
+        sketchfab_token: The Sketchfab V3 API token to use.
+
+    Returns:
+        Dictionary containing metadata:
+        {
+            "uid": str,
+            "title": str,
+            "model_url": str,
+            "attribution": {
+                "author": str,
+                "license": str,
+                "source_url": str
+            }
+        }
+
+    Raises:
+        ValueError: if model is not found ("MODEL_NOT_FOUND").
+        RuntimeError: if an external API call fails ("REMOTE_SERVICE_ERROR").
+    """
+    logger.info("Fetching 3D model details and downloading model for UID: '%s'", uid)
+
+    if not sketchfab_token:
+        logger.error("Sketchfab access token is empty or missing.")
+        raise RuntimeError("Sketchfab access token is not configured. Request cannot be processed.")
+
     model_dir = os.path.join(CACHE_DIR, uid)
     gltf_file = os.path.join(model_dir, "scene.gltf")
+    metadata_file = os.path.join(model_dir, "metadata.json")
 
-    # If already cached, reuse immediately
+    # Cache HIT: If already fully cached, reuse metadata and GLTF immediately
+    if os.path.isdir(model_dir) and os.path.exists(gltf_file) and os.path.exists(metadata_file):
+        logger.info("Cache HIT: Model %s is already cached locally with metadata.", uid)
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("Failed to load cached metadata.json: %s. Fetching details again.", e)
+
+    # Cache MISS or metadata.json missing: Fetch model details from Sketchfab Model API
+    model_detail_url = f"https://api.sketchfab.com/v3/models/{uid}"
+    auth_headers = get_auth_headers(sketchfab_token)
+
+    logger.info("Fetching model detail from URL: '%s'", model_detail_url)
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(model_detail_url, headers=auth_headers)
+
+            logger.info("Received model details response. Status code: %d", response.status_code)
+
+            if response.status_code != 200:
+                logger.error(
+                    "Sketchfab model detail failed with status code: %d. Error details: %s",
+                    response.status_code,
+                    response.text
+                )
+                raise RuntimeError(f"Sketchfab Model Detail API failure (HTTP {response.status_code}): {response.text}")
+
+            model = response.json()
+    except httpx.HTTPError as e:
+        logger.error("Network error during Sketchfab model detail request: %s", e)
+        raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
+
+    name = model.get("name", "Modello 3D")
+    author_info = model.get("user", {})
+    author_name = author_info.get("displayName") or author_info.get("username") or "Autore sconosciuto"
+    license_name = (model.get("license") or {}).get("fullName") or "CC Attribution"
+    source_url = model.get("viewerUrl") or f"https://sketchfab.com/models/{uid}"
+
+    # If the GLTF files are already unzipped/cached, skip downloading entirely
     if os.path.isdir(model_dir) and os.path.exists(gltf_file):
-        logger.info("Cache HIT: Model %s is already cached locally.", uid)
+        logger.info("Cache HIT (GLTF files exist): Model %s is already cached locally. Rebuilding metadata.", uid)
     else:
         logger.info("Cache MISS: Downloading model %s from Sketchfab Download API.", uid)
         os.makedirs(model_dir, exist_ok=True)
@@ -232,15 +317,12 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
         try:
             with httpx.Client(timeout=10.0) as client:
                 dl_headers = get_auth_headers(sketchfab_token)
-                dl_auth_present = "PRESENT" if dl_headers.get("Authorization", "").strip() else "EMPTY"
-                logger.info("Sending download request with Auth header: %s", dl_auth_present)
-
                 download_resp = client.get(download_endpoint, headers=dl_headers)
 
                 logger.info("Download link API response status: %d", download_resp.status_code)
                 if download_resp.status_code != 200:
                     logger.error(
-                        "Failed to request download for model %s: distinctly non-200 status code: %d - %s",
+                        "Failed to request download for model %s: status code: %d - %s",
                         uid,
                         download_resp.status_code,
                         download_resp.text
@@ -290,7 +372,7 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
 
     # Conforming return object
     stable_local_url = f"/models/{uid}/scene.gltf"
-    return {
+    res = {
         "uid": uid,
         "title": name,
         "model_url": stable_local_url,
@@ -300,3 +382,12 @@ def search_and_fetch_3d_model(query: str, sketchfab_token: str) -> dict:
             "source_url": source_url
         }
     }
+
+    # Save to metadata.json in cached directory
+    try:
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.warning("Failed to save metadata.json to server cache: %s", e)
+
+    return res

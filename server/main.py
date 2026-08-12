@@ -42,7 +42,7 @@ from services.stt_service import transcribe_audio  # noqa: E402
 from services.translate_service import translate_text  # noqa: E402
 from services.quiz_service import generate_quiz  # noqa: E402
 from services.quiz_validator import InvalidQuizError  # noqa: E402
-from services.model_service import search_and_fetch_3d_model  # noqa: E402
+from services.model_service import search_3d_models, fetch_3d_model_by_uid  # noqa: E402
 from services.summary_service import generate_summary  # noqa: E402
 from services.ocr_vision_service import generate_ocr_vision  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
@@ -283,7 +283,7 @@ async def analyze(
                 "message": str(e),
             }
 
-    elif action == "load_3d_model":
+    elif action == "search_3d_models":
         if not x_sf_token:
             return {
                 "type": "error",
@@ -297,11 +297,52 @@ async def analyze(
         if not query:
             raise HTTPException(
                 status_code=400,
-                detail="Missing 'query' field inside 'data' for 'load_3d_model' action",
+                detail="Missing 'query' field inside 'data' for 'search_3d_models' action",
             )
 
         try:
-            model_metadata = search_and_fetch_3d_model(query, x_sf_token)
+            results = search_3d_models(query, x_sf_token)
+            return {
+                "type": "model_search_results",
+                "source": "remote_index",
+                "results": results,
+            }
+        except ValueError as e:
+            logger.warning("3D model search not found for query '%s': %s", query, e)
+            return {
+                "type": "error",
+                "code": "MODEL_NOT_FOUND",
+                "action": "search_3d_models",
+                "message": str(e),
+            }
+        except Exception as e:
+            logger.error("Sketchfab search error: %s", e, exc_info=True)
+            return {
+                "type": "error",
+                "code": "REMOTE_SERVICE_ERROR",
+                "action": "search_3d_models",
+                "message": f"Errore del servizio Sketchfab: {str(e)}",
+            }
+
+    elif action == "select_3d_model":
+        if not x_sf_token:
+            return {
+                "type": "error",
+                "code": "MISSING_CREDENTIALS",
+                "action": action,
+                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.",
+            }
+
+        data_obj = payload.get("data") or {}
+        uid = data_obj.get("uid")
+        if not uid:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'uid' field inside 'data' for 'select_3d_model' action",
+            )
+
+        try:
+            model_metadata = fetch_3d_model_by_uid(uid, x_sf_token)
             return {
                 "type": "model_3d",
                 "source": "remote_index",
@@ -310,11 +351,11 @@ async def analyze(
                 "attribution": model_metadata["attribution"],
             }
         except ValueError as e:
-            logger.warning("3D model not found for query '%s': %s", query, e)
+            logger.warning("3D model not found for uid '%s': %s", uid, e)
             return {
                 "type": "error",
                 "code": "MODEL_NOT_FOUND",
-                "action": "load_3d_model",
+                "action": "select_3d_model",
                 "message": str(e),
             }
         except Exception as e:
@@ -322,7 +363,7 @@ async def analyze(
             return {
                 "type": "error",
                 "code": "REMOTE_SERVICE_ERROR",
-                "action": "load_3d_model",
+                "action": "select_3d_model",
                 "message": f"Errore del servizio Sketchfab o download fallito: {str(e)}",
             }
 
