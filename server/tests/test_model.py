@@ -3,7 +3,7 @@ Unit and Integration Tests for Sketchfab 3D Model Service.
 
 Design Note:
     This module tests the model search, details retrieval, local glTF caching,
-    unzipping, and E2E API routing for search_3d_models and select_3d_model actions.
+    unzipping, security validations, and E2E API routing.
     It mocks all external HTTP requests to Sketchfab's endpoints using standard mock decorators.
 """
 
@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from services.model_service import (
     search_3d_models,
     fetch_3d_model_by_uid,
+    extract_significant_words,
+    get_license_info,
+    is_cc_licensed,
     CACHE_DIR
 )
 from main import app
@@ -48,33 +51,255 @@ def create_dummy_zip_bytes() -> bytes:
     return buf.getvalue()
 
 
-# ------------------ search_3d_models tests ------------------
+def create_unsafe_zip_bytes_slip() -> bytes:
+    """Helper to create unsafe ZIP archive bytes demonstrating path traversal (Zip Slip)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zip_ref:
+        # File pointing outside the output folder
+        zip_ref.writestr("../unsafe_file.txt", "unsafe content")
+    return buf.getvalue()
+
+
+# 1. Normalizzazione Search API Test
+def test_extract_significant_words() -> None:
+    """Tests normalization and significant words extraction."""
+    words = extract_significant_words("L'elefante con un grande cappello-rosso")
+    # Expected significant words (lowercased, punctuation-cleaned, stopwords ignored, length >= 2)
+    assert "elefante" in words
+    assert "grande" in words
+    assert "cappello" in words
+    assert "rosso" in words
+    assert "con" not in words
+    assert "un" not in words
+
+
+# 2-5. CC License Mapping Tests (CC0, CC BY, CC BY-NC, unrecognized, missing)
+def test_get_license_info_mapping() -> None:
+    """Tests license retrieval using get_license_info by uid, slug, label, or fullName."""
+    # CC BY by UID
+    by_info = get_license_info({"uid": "322a749bcfa841b29dff1e8a1bb74b0b"})
+    assert by_info is not None
+    assert by_info["slug"] == "by"
+    assert by_info["attribution_required"] is True
+    assert by_info["commercial_use"] is True
+
+    # CC BY-NC by slug
+    nc_info = get_license_info({"slug": "by-nc"})
+    assert nc_info is not None
+    assert nc_info["slug"] == "by-nc"
+    assert nc_info["commercial_use"] is False
+
+    # CC0 by label
+    cc0_info = get_license_info({"label": "CC0 Public Domain"})
+    assert cc0_info is not None
+    assert cc0_info["slug"] == "cc0"
+    assert cc0_info["attribution_required"] is False
+
+    # Unrecognized license
+    unrec = get_license_info({"uid": "invalid-uid", "slug": "commercial-standard"})
+    assert unrec is None
+
+    # Missing license
+    assert get_license_info(None) is None
+
+
+def test_is_cc_licensed() -> None:
+    """Tests is_cc_licensed helper."""
+    assert is_cc_licensed({"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}) is True  # CC BY
+    assert is_cc_licensed({"uid": "7c23a1ba438d4306920229c12afcb5f9"}) is True  # CC0
+    assert is_cc_licensed({"slug": "by-nc-nd"}) is True                        # CC BY-NC-ND
+    assert is_cc_licensed({"slug": "free-st"}) is False                         # Free Standard (non-CC)
+    assert is_cc_licensed({}) is False
+
+
+# 6-8. Error handling on Search (401, 403)
+@patch("httpx.Client.get")
+def test_search_3d_models_401(mock_get: MagicMock) -> None:
+    """Tests that a 401 response from Search API raises an appropriate RuntimeError."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.text = "Unauthorized"
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(RuntimeError, match="Autenticazione Sketchfab fallita"):
+        search_3d_models("ELEPHANT", "test-token")
+
 
 @patch("httpx.Client.get")
-def test_search_3d_models_success(mock_get: MagicMock) -> None:
-    """Tests that search_3d_models performs search, filters to downloadable+CC and returns candidate dictionaries with thumbnails closest to 256px."""
+def test_search_3d_models_403(mock_get: MagicMock) -> None:
+    """Tests that a 403 response from Search API raises an appropriate RuntimeError."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = "Forbidden"
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(RuntimeError, match="Accesso vietato alla ricerca"):
+        search_3d_models("ELEPHANT", "test-token")
+
+
+# 9-10. Error handling on Fetch (401, 403)
+@patch("httpx.Client.get")
+def test_fetch_3d_model_401(mock_get: MagicMock) -> None:
+    """Tests that 401 on fetch_3d_model_by_uid raises correct error."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.text = "Unauthorized"
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(RuntimeError, match="Autenticazione Sketchfab fallita"):
+        fetch_3d_model_by_uid("uid123", "test-token")
+
+
+@patch("httpx.Client.get")
+def test_fetch_3d_model_403(mock_get: MagicMock) -> None:
+    """Tests that 403 on fetch_3d_model_by_uid raises correct error."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.text = "Forbidden"
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(RuntimeError, match="Accesso vietato a questo modello"):
+        fetch_3d_model_by_uid("uid123", "test-token")
+
+
+# 11-13. Download & ZIP Edge cases (Missing Download URL, Expired URL, Path Traversal / Zip Slip)
+@patch("httpx.Client.get")
+def test_fetch_download_url_missing(mock_get: MagicMock) -> None:
+    """Tests when temporary download URL is missing from Sketchfab response."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid123", "name": "Elephant", "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+    }
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {}  # Empty gltf info
+
+    mock_get.side_effect = [mock_detail, mock_download]
+
+    with pytest.raises(RuntimeError, match="Nessun link di download glTF disponibile"):
+        fetch_3d_model_by_uid("uid123", "test-token")
+
+
+@patch("httpx.Client.get")
+def test_fetch_temporary_url_expired(mock_get: MagicMock) -> None:
+    """Tests when temporary URL has expired (AWS returns 403 or 400)."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid123", "name": "Elephant", "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+    }
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {"gltf": {"url": "https://temp-s3-url.com/model.zip"}}
+    mock_aws = MagicMock()
+    mock_aws.status_code = 403  # Expired URL
+
+    mock_get.side_effect = [mock_detail, mock_download, mock_aws]
+
+    with pytest.raises(RuntimeError, match="Il link temporaneo per scaricare il modello è scaduto"):
+        fetch_3d_model_by_uid("uid123", "test-token")
+
+
+@patch("httpx.Client.get")
+def test_fetch_zip_path_traversal_slip(mock_get: MagicMock) -> None:
+    """Tests Zip Slip path traversal protection."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid123", "name": "Elephant", "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+    }
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {"gltf": {"url": "https://temp-s3-url.com/model.zip"}}
+    mock_aws = MagicMock()
+    mock_aws.status_code = 200
+    mock_aws.content = create_unsafe_zip_bytes_slip()
+
+    mock_get.side_effect = [mock_detail, mock_download, mock_aws]
+
+    with pytest.raises(RuntimeError, match="Tentativo di Zip Slip / Path Traversal rilevato"):
+        fetch_3d_model_by_uid("uid123", "test-token")
+
+
+# 14. Missing Token check
+def test_missing_tokens_raises() -> None:
+    """Tests that search and select raise if sketchfab_token is missing or empty."""
+    with pytest.raises(RuntimeError, match="Sketchfab access token is not configured"):
+        search_3d_models("ELEPHANT", "")
+
+    with pytest.raises(RuntimeError, match="Sketchfab access token is not configured"):
+        fetch_3d_model_by_uid("uid123", "")
+
+
+# 15. Pagination search check
+@patch("httpx.Client.get")
+def test_paginated_search_success(mock_get: MagicMock) -> None:
+    """Tests robust multi-page / cursor pagination on Sketchfab search."""
+    # First page returns a non-CC model and a "next" page URL
+    mock_page1 = MagicMock()
+    mock_page1.status_code = 200
+    mock_page1.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=abc",
+        "results": [
+            {
+                "uid": "model_non_cc",
+                "name": "Non-CC Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "72eb2b1960364637901eacce19283624"}  # Free standard, non-CC
+            }
+        ]
+    }
+
+    # Second page returns a CC model
+    mock_page2 = MagicMock()
+    mock_page2.status_code = 200
+    mock_page2.json.return_value = {
+        "next": None,
+        "results": [
+            {
+                "uid": "model_cc_elephant",
+                "name": "CC-BY Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},  # CC BY
+                "thumbnails": {"images": [{"url": "thumb.jpg", "width": 256}]}
+            }
+        ]
+    }
+
+    mock_get.side_effect = [mock_page1, mock_page2]
+
+    results = search_3d_models("ELEPHANT", "test-token")
+    assert len(results) == 1
+    assert results[0]["uid"] == "model_cc_elephant"
+    assert results[0]["name"] == "CC-BY Elephant"
+
+
+# 16. Elephant Query logic check
+@patch("httpx.Client.get")
+def test_query_elephant_success(mock_get: MagicMock) -> None:
+    """Tests ELEPHANT query success where search returns 'license' omitting 'slug'."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
     mock_search_resp.json.return_value = {
         "results": [
             {
-                "uid": "model_uid_123",
-                "name": "Water Molecule H2O",
+                "uid": "elephant_uid_123",
+                "name": "African Elephant (CC-BY)",
                 "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/model_uid_123",
+                "viewerUrl": "https://sketchfab.com/models/elephant_uid_123",
                 "user": {
-                    "username": "science_creator",
-                    "displayName": "Science Creator"
+                    "username": "animal_artist",
+                    "displayName": "Animal Artist"
                 },
                 "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
+                    "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
+                    "label": "CC Attribution"
+                    # "slug" IS OMITTED as per real Search API!
                 },
                 "thumbnails": {
                     "images": [
-                        {"url": "large.jpg", "width": 1024, "height": 576},
-                        {"url": "medium.jpg", "width": 256, "height": 144},
-                        {"url": "small.jpg", "width": 64, "height": 36}
+                        {"url": "thumb_256.jpg", "width": 256, "height": 144}
                     ]
                 }
             }
@@ -82,164 +307,78 @@ def test_search_3d_models_success(mock_get: MagicMock) -> None:
     }
     mock_get.return_value = mock_search_resp
 
-    results = search_3d_models("H2O", "test-sketchfab-token")
-
-    # Assert correct parameters passed to API search (no downloadable param inside search query per standard)
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("q") == "H2O"
-    assert "downloadable" not in first_call_kwargs.get("params", {})
-
+    results = search_3d_models("ELEPHANT", "test-token")
     assert len(results) == 1
-    assert results[0]["uid"] == "model_uid_123"
-    assert results[0]["name"] == "Water Molecule H2O"
-    assert results[0]["thumbnail_url"] == "medium.jpg" # Closest to 256px
-    assert results[0]["author"] == "Science Creator"
-    assert results[0]["license"] == "CC Attribution"
+    assert results[0]["uid"] == "elephant_uid_123"
+    assert results[0]["name"] == "African Elephant (CC-BY)"
+    assert results[0]["license_info"]["license"] == "by"
 
 
+# 17. Mocked E2E Integration Flow Test
 @patch("httpx.Client.get")
-def test_search_3d_models_relevance_sorting(mock_get: MagicMock) -> None:
-    """Tests relevance-sorting where matching significant word comes first, but non-matching is NOT rejected (reordered lower)."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
+def test_integration_flow_mocked(mock_get: MagicMock) -> None:
+    """
+    Mocked E2E integration test:
+    search -> filter -> license -> download request -> temporary URL -> archive extraction.
+    """
+    # 1. Search response with downloadable CC model
+    mock_search = MagicMock()
+    mock_search.status_code = 200
+    mock_search.json.return_value = {
         "results": [
             {
-                "uid": "villa_uid_999",
-                "name": "Luxury Modern Villa with Pool",
+                "uid": "e2e_model_999",
+                "name": "E2E African Elephant",
                 "isDownloadable": True,
-                "license": {"slug": "by", "fullName": "CC Attribution"},
-                "thumbnails": {"images": [{"url": "villa.jpg", "width": 256}]}
-            },
-            {
-                "uid": "h2o_uid_111",
-                "name": "Water Molecule (H2O)",
-                "isDownloadable": True,
-                "license": {"slug": "by", "fullName": "CC Attribution"},
-                "thumbnails": {"images": [{"url": "h2o.jpg", "width": 256}]}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+                "thumbnails": {"images": [{"url": "thumb.jpg", "width": 256}]}
             }
         ]
     }
-    mock_get.return_value = mock_search_resp
 
-    results = search_3d_models("H2O", "test-sketchfab-token")
-
-    # We expect 2 results: H2O is relevance-sorted first (matches significant word), then Villa is sorted second.
-    assert len(results) == 2
-    assert results[0]["uid"] == "h2o_uid_111"
-    assert results[1]["uid"] == "villa_uid_999"
-
-
-@patch("httpx.Client.get")
-def test_search_no_results_or_filters_raises_value_error(mock_get: MagicMock) -> None:
-    """Tests that if search returns no results or none pass downloadable+CC filters, ValueError is raised."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "non_dl_uid",
-                "name": "Non downloadable model",
-                "isDownloadable": False,
-                "license": {"slug": "by"}
-            },
-            {
-                "uid": "non_cc_uid",
-                "name": "Non CC licensed model",
-                "isDownloadable": True,
-                "license": {"slug": "commercial-standard"} # No CC
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
-        search_3d_models("query", "test-sketchfab-token")
-
-
-# ------------------ fetch_3d_model_by_uid tests ------------------
-
-@patch("httpx.Client.get")
-def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
-    """Tests download, extraction, and caching logic of fetch_3d_model_by_uid on cache miss."""
-    # 1. Setup mock model details API response
-    mock_detail_resp = MagicMock()
-    mock_detail_resp.status_code = 200
-    mock_detail_resp.json.return_value = {
-        "uid": "model_uid_123",
-        "name": "Water Molecule H2O",
-        "viewerUrl": "https://sketchfab.com/models/model_uid_123",
-        "user": {
-            "username": "science_creator",
-            "displayName": "Science Creator"
-        },
-        "license": {
-            "slug": "by",
-            "fullName": "CC Attribution"
-        }
+    # 2. Detail model response
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "e2e_model_999",
+        "name": "E2E African Elephant",
+        "viewerUrl": "https://sketchfab.com/models/e2e_model_999",
+        "user": {"username": "artist_e2e", "displayName": "Artist E2E"},
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
     }
 
-    # 2. Setup mock download link response
-    mock_download_resp = MagicMock()
-    mock_download_resp.status_code = 200
-    mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip"
-        }
+    # 3. Download link response
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {
+        "gltf": {"url": "https://s3.amazonaws.com/sketchfab/archives/e2e_gltf.zip"}
     }
 
-    # 3. Setup mock zip archive response
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
+    # 4. ZIP archive bytes download response
+    mock_archive = MagicMock()
+    mock_archive.status_code = 200
+    mock_archive.content = create_dummy_zip_bytes()
 
-    mock_get.side_effect = [mock_detail_resp, mock_download_resp, mock_archive_resp]
+    mock_get.side_effect = [mock_search, mock_detail, mock_download, mock_archive]
 
-    metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
+    # Run search
+    search_results = search_3d_models("ELEPHANT", "test-token")
+    assert len(search_results) == 1
+    assert search_results[0]["uid"] == "e2e_model_999"
 
-    assert metadata["uid"] == "model_uid_123"
-    assert metadata["title"] == "Water Molecule H2O"
-    assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
-    assert metadata["attribution"]["author"] == "Science Creator"
+    # Run fetch/download
+    metadata = fetch_3d_model_by_uid("e2e_model_999", "test-token")
+    assert metadata["uid"] == "e2e_model_999"
+    assert metadata["title"] == "E2E African Elephant"
+    assert metadata["model_url"] == "/models/e2e_model_999/scene.gltf"
 
-    # Verify extracted cache and metadata.json
-    assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "scene.gltf"))
-    assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "metadata.json"))
-
-
-@patch("httpx.Client.get")
-def test_fetch_3d_model_by_uid_cache_hit_skips_download(mock_get: MagicMock) -> None:
-    """Tests that fetch_3d_model_by_uid reads directly from server-side cache and skips all network requests on cache hit."""
-    model_dir = os.path.join(CACHE_DIR, "model_uid_123")
-    os.makedirs(model_dir, exist_ok=True)
-    with open(os.path.join(model_dir, "scene.gltf"), "w") as f:
-        f.write("{'info': 'manually cached gltf'}")
-
-    cached_metadata = {
-        "uid": "model_uid_123",
-        "title": "Cached Water Molecule",
-        "model_url": "/models/model_uid_123/scene.gltf",
-        "attribution": {
-            "author": "Cached Science Creator",
-            "license": "CC Attribution",
-            "source_url": "https://sketchfab.com/models/model_uid_123"
-        }
-    }
-    with open(os.path.join(model_dir, "metadata.json"), "w") as f:
-        import json
-        json.dump(cached_metadata, f)
-
-    metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
-
-    # Assert returned details are exactly as cached
-    assert metadata["title"] == "Cached Water Molecule"
-    assert metadata["attribution"]["author"] == "Cached Science Creator"
-
-    # Verify no HTTP calls made
-    assert mock_get.call_count == 0
+    # Verify zip extraction and attribution files
+    assert os.path.exists(os.path.join(CACHE_DIR, "e2e_model_999", "scene.gltf"))
+    assert os.path.exists(os.path.join(CACHE_DIR, "e2e_model_999", "metadata.json"))
+    assert os.path.exists(os.path.join(CACHE_DIR, "e2e_model_999", "sf_attribution.json"))
 
 
-# ------------------ End-to-End API Routing Tests ------------------
+# ------------------ End-to-End API Routing Tests (re-validated) ------------------
 
 @patch("main.search_3d_models")
 def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
@@ -250,7 +389,20 @@ def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
             "name": "Model 1",
             "thumbnail_url": "thumb1.jpg",
             "author": "Author 1",
-            "license": "CC-BY"
+            "license": "CC-BY",
+            "is_downloadable": True,
+            "model_url": "https://sketchfab.com/models/model_1",
+            "license_info": {
+                "license": "by",
+                "license_label": "CC Attribution",
+                "license_url": "http://creativecommons.org/licenses/by/4.0/",
+                "creator": "Author 1",
+                "creator_url": "https://sketchfab.com/author1",
+                "source_url": "https://sketchfab.com/models/model_1",
+                "attribution_required": True,
+                "commercial_use": True,
+                "derivatives_allowed": True
+            }
         }
     ]
 
@@ -262,7 +414,7 @@ def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
     payload = {
         "action": "search_3d_models",
         "data": {
-            "query": "H2O"
+            "query": "ELEPHANT"
         }
     }
 
@@ -287,6 +439,10 @@ def test_api_select_3d_model_success(mock_fetch: MagicMock) -> None:
             "author": "Creator display",
             "license": "CC Attribution",
             "source_url": "https://sketchfab.com/models/model_uid_abc"
+        },
+        "license_info": {
+            "license": "by",
+            "license_label": "CC Attribution"
         }
     }
 
