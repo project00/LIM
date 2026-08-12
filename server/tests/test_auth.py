@@ -165,7 +165,7 @@ def test_mermaid_validator_xss_rejected() -> None:
 @patch("litellm.completion")
 def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> None:
     """
-    Tests that POST /api/v1/analyze returns the correct error response structure
+    Tests that POST /api/v1/analyze returns the correct fallback diagram
     when the LLM output fails validation (e.g. contains invalid starting keywords).
     """
     client = TestClient(app)
@@ -193,16 +193,15 @@ def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> No
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "INVALID_LLM_OUTPUT"
-    assert data["action"] == "concept_map"
-    assert "non inizia con una parola chiave valida" in data["message"]
+    assert data["type"] == "concept_map"
+    assert data["source"] == "remote_llm"
+    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]
 
 
 @patch("litellm.completion")
 def test_concept_map_xss_integration_rejection(mock_completion: MagicMock) -> None:
     """
-    Tests that POST /api/v1/analyze returns the correct error response structure
+    Tests that POST /api/v1/analyze returns the correct fallback diagram
     when the LLM output contains an XSS vector like <script> or iframe.
     """
     client = TestClient(app)
@@ -230,16 +229,15 @@ def test_concept_map_xss_integration_rejection(mock_completion: MagicMock) -> No
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "INVALID_LLM_OUTPUT"
-    assert data["action"] == "concept_map"
-    assert "potenziale contenuto XSS" in data["message"]
+    assert data["type"] == "concept_map"
+    assert data["source"] == "remote_llm"
+    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]
 
 
 @patch("litellm.completion")
 def test_concept_map_empty_integration_rejection(mock_completion: MagicMock) -> None:
     """
-    Tests that POST /api/v1/analyze returns the correct error response structure
+    Tests that POST /api/v1/analyze returns the correct fallback diagram
     when the LLM output is empty or contains only markdown fences without code.
     """
     client = TestClient(app)
@@ -267,7 +265,6 @@ def test_concept_map_empty_integration_rejection(mock_completion: MagicMock) -> 
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "INVALID_LLM_OUTPUT"
-    assert data["action"] == "concept_map"
-    assert "vuoto" in data["message"]
+    assert data["type"] == "concept_map"
+    assert data["source"] == "remote_llm"
+    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]

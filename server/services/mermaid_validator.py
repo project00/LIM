@@ -19,6 +19,43 @@ class InvalidMermaidError(ValueError):
     pass
 
 
+def is_mermaid_line(line: str) -> bool:
+    """
+    Heuristic check to determine if a line is a valid Mermaid graph instruction.
+    Returns False for conversational prose lines.
+    """
+    line_strip = line.strip()
+    if not line_strip:
+        return True  # Empty/whitespace lines are fine inside the diagram
+
+    # Standard connectors
+    if any(conn in line_strip for conn in ("-->", "---", "==>", "-.->", "->", "<-", "<->", "=>")):
+        return True
+
+    # Node wrappers and delimiters
+    if any(char in line_strip for char in ("[", "(", "{", '"', "]", ")", "}", "%%")):
+        return True
+
+    # Keywords / statements
+    keywords = (
+        "graph", "flowchart", "subgraph", "end", "style", "classdef", "class",
+        "click", "direction", "linkstyle", "sequencediagram", "classdiagram",
+        "statediagram", "statediagram-v2", "erdiagram", "gantt", "pie",
+        "gitgraph", "mindmap", "journey", "timeline"
+    )
+    first_word_match = re.match(r"^([a-zA-Z0-9_-]+)", line_strip)
+    if first_word_match:
+        word = first_word_match.group(1).lower()
+        if word in keywords:
+            return True
+
+    # Single-word identifiers are allowed (rare but valid)
+    if re.match(r"^[a-zA-Z0-9_-]+$", line_strip):
+        return True
+
+    return False
+
+
 def validate_and_sanitize_mermaid(code: str) -> str:
     """
     Strips Markdown code blocks, validates keywords, and filters out XSS risks.
@@ -32,53 +69,159 @@ def validate_and_sanitize_mermaid(code: str) -> str:
     Raises:
         InvalidMermaidError: with a clear validation error code/detail.
     """
+    # 1. Gestione stringa vuota
     if not code or not code.strip():
+        logger.error("Errore di validazione Mermaid: L'input grezzo fornito dall'LLM è vuoto o composto solo da spazi.")
         raise InvalidMermaidError("Il contenuto generato dal modello è vuoto.")
 
     cleaned = code.strip()
 
-    # 1. Strip Markdown code fences if the model included them (either at start or nested)
-    match = re.search(r"```(?:mermaid)?([\s\S]*?)```", cleaned, re.IGNORECASE)
-    if match:
-        cleaned = match.group(1).strip()
+    # 2. Indipendenza dal formato: cerca blocchi markdown, se non presenti tratta l'intero testo grezzo
+    markdown_match = re.search(r"```(?:mermaid)?([\s\S]*?)```", cleaned, re.IGNORECASE)
+    if markdown_match:
+        candidate_text = markdown_match.group(1).strip()
     else:
-        # Otherwise, remove any occurrences of ```mermaid or ``` if they exist
-        cleaned = re.sub(r"```mermaid", "", cleaned, flags=re.IGNORECASE)
-        cleaned = cleaned.replace("```", "").strip()
+        # Rimuove comunque eventuali markdown fence singoli spuri
+        candidate_text = re.sub(r"```mermaid", "", cleaned, flags=re.IGNORECASE)
+        candidate_text = candidate_text.replace("```", "").strip()
 
-    if not cleaned:
-        raise InvalidMermaidError("Il contenuto generato è vuoto dopo la rimozione dei code fences.")
+    # 3. Rimozione dei convenevoli (Preamble & Postamble Stripping)
+    # Trova la prima dichiarazione di tipo grafico valida che inizia una riga
+    graph_types = (
+        "graph", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram-v2",
+        "stateDiagram", "erDiagram", "gantt", "pie", "gitGraph", "mindmap",
+        "journey", "timeline"
+    )
+    pattern_start = r"^\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram-v2|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|journey|timeline)\b"
 
-    # Find the earliest starting keyword that starts a line (with optional leading whitespace)
-    valid_keywords = ("graph", "flowchart", "mindmap")
-    earliest_idx = -1
-    for kw in valid_keywords:
-        m = re.search(r"^\s*" + kw + r"\b", cleaned, re.IGNORECASE | re.MULTILINE)
-        if m:
-            idx = m.start()
-            if earliest_idx == -1 or idx < earliest_idx:
-                earliest_idx = idx
+    match_start = re.search(pattern_start, candidate_text, re.IGNORECASE | re.MULTILINE)
+    if match_start:
+        start_idx = match_start.start()
+        candidate_text = candidate_text[start_idx:].strip()
 
-    if earliest_idx != -1:
-        cleaned = cleaned[earliest_idx:].strip()
+    # Postamble Stripping: scarta tutto ciò che segue l'ultima istruzione del grafico
+    lines = candidate_text.splitlines()
+    last_valid_idx = len(lines) - 1
+    while last_valid_idx >= 0:
+        if is_mermaid_line(lines[last_valid_idx]):
+            break
+        last_valid_idx -= 1
 
-    # 2. Check starting keyword (graph, flowchart, mindmap)
+    if last_valid_idx >= 0:
+        cleaned_text = "\n".join(lines[:last_valid_idx + 1]).strip()
+    else:
+        cleaned_text = candidate_text
+
+    if not cleaned_text:
+        raise InvalidMermaidError("Il contenuto generato è vuoto dopo l'estrazione e la rimozione dei convenevoli.")
+
+    # 4. Auto-Repair Heuristics (Riparazione Automatica)
+
+    # Heuristic A: Iniezione dell'intestazione
     first_non_empty_line = ""
-    for line in cleaned.splitlines():
-        line_strip = line.strip()
-        if line_strip:
-            first_non_empty_line = line_strip
+    for line in cleaned_text.splitlines():
+        if line.strip():
+            first_non_empty_line = line.strip()
             break
 
-    first_line_lower = first_non_empty_line.lower()
-    if not any(first_line_lower.startswith(kw) for kw in valid_keywords):
+    first_word_match = re.match(r"^([a-zA-Z0-9_-]+)", first_non_empty_line)
+    starts_with_valid_kw = False
+    if first_word_match:
+        word = first_word_match.group(1).lower()
+        if word in graph_types:
+            starts_with_valid_kw = True
+
+    # Inietta l'intestazione solo se manca ma il diagramma sembra effettivamente iniziare con elementi grafici validi
+    has_any_relation_arrow = any(conn in cleaned_text for conn in ("-->", "---", "==>", "-.->", "->", "<-", "<->", "=>"))
+    has_mermaid_syntax_delimiters = any(char in first_non_empty_line for char in ("[", "(", "{", "-->", "---", "->"))
+
+    if not starts_with_valid_kw and has_any_relation_arrow and has_mermaid_syntax_delimiters:
+        logger.info("Intestazione non trovata all'inizio del diagramma. Forzato inserimento di 'graph TD'.")
+        cleaned_text = "graph TD\n" + cleaned_text
+
+    # Heuristic B: Normalizzazione dei connettori (es. -> in -->)
+    # Converte solo i connettori singoli '->' non preceduti o seguiti da altri caratteri speciali di connettore
+    cleaned_text = re.sub(r"(?<![-.=])->(?![->])", "-->", cleaned_text)
+
+    # Heuristic C: Sanitizzazione dei nodi e caratteri speciali
+    # Rileva e racchiude il testo dei nodi tra virgolette doppie se contiene caratteri speciali e non è già quotato
+    def replace_node(match):
+        node_id = match.group(1)
+        open_delim = match.group(2).replace(" ", "")
+        content = match.group(3).strip()
+        close_delim = match.group(4).replace(" ", "")
+
+        pairs = {
+            "([": "])",
+            "[[": "]]",
+            "[(": ")]",
+            "((": "))",
+            "{{": "}}",
+            "[/": "/]",
+            "[\\": "\\]",
+            "[": "]",
+            "(": ")",
+            "{": "}",
+            ">": "]",
+        }
+
+        if pairs.get(open_delim) != close_delim:
+            return match.group(0)
+
+        if content.startswith('"') and content.endswith('"'):
+            return f"{node_id}{open_delim}{content}{close_delim}"
+
+        # Se contiene caratteri speciali, spazi o punteggiatura, racchiudilo tra virgolette doppie
+        if re.search(r"[^a-zA-Z0-9_-]", content):
+            content_escaped = content.replace('"', '\\"')
+            return f'{node_id}{open_delim}"{content_escaped}"{close_delim}'
+
+        return f"{node_id}{open_delim}{content}{close_delim}"
+
+    # Regex per catturare identificatori di nodo seguiti da delimitatori e testo interno
+    # Utilizza il lookahead negativo (?!-->|==>|-.->|->) per evitare di matchare connettori/frecce erroneamente come nodi
+    delim_pattern = r"(?!-->|==>|-.->|->)\b([a-zA-Z0-9_-]+)\s*(\(\s*\[|\[\s*\[|\[\s*\(|\(\s*\(|\{\s*\{|\[\s*/|\[\s*\\|\[|\(|\{|\>)\s*(.*?)\s*(\]\s*\)|\]\s*\]|\)\s*\]|\)\s*\)|\}\s*\}|/\s*\]|\\\s*\]|\]\s*\)|\]|\)|\})"
+    cleaned_text = re.sub(delim_pattern, replace_node, cleaned_text)
+
+    # Heuristic D: Rimozione di classi CSS non definite
+    defined_classes = set(re.findall(r"\bclassDef\s+([a-zA-Z0-9_-]+)", cleaned_text, re.IGNORECASE))
+
+    def remove_undefined_classes(match):
+        class_name = match.group(1)
+        if class_name in defined_classes:
+            return match.group(0)
+        return ""
+
+    cleaned_text = re.sub(r":::([a-zA-Z0-9_-]+)", remove_undefined_classes, cleaned_text)
+
+    # 5. Pipeline di Validazione e Fallback (Validazione strutturale minima)
+    # Trova l'intestazione effettiva dopo la pulizia
+    final_first_line = ""
+    for line in cleaned_text.splitlines():
+        if line.strip():
+            final_first_line = line.strip().lower()
+            break
+
+    has_valid_header = any(final_first_line.startswith(kw) for kw in graph_types)
+    is_flowchart_or_graph = any(final_first_line.startswith(kw) for kw in ("graph", "flowchart"))
+
+    has_relation = any(conn in cleaned_text for conn in ("-->", "---", "==>", "-.->", "->", "<-", "<->", "=>"))
+
+    if not has_valid_header:
         logger.warning("Mermaid validation failed: Invalid starting keyword.")
         raise InvalidMermaidError(
             "Il diagramma Mermaid generato non inizia con una parola chiave valida "
             "(graph, flowchart, mindmap)."
         )
 
-    # 3. Security: Check for XSS vectors
+    if is_flowchart_or_graph and not has_relation:
+        logger.warning("Validazione Mermaid fallita: flowchart/graph senza alcuna relazione rilevata.")
+        raise InvalidMermaidError(
+            "Il diagramma Mermaid generato non supera i requisiti strutturali minimi "
+            "(intestazione valida e almeno una relazione tra due nodi)."
+        )
+
+    # 6. Security: Check for XSS vectors
     xss_patterns = [
         r"<script\b[^>]*>",
         r"<img\b[^>]*>",
@@ -86,8 +229,8 @@ def validate_and_sanitize_mermaid(code: str) -> str:
         r"\bjavascript\s*:"
     ]
     for pattern in xss_patterns:
-        if re.search(pattern, cleaned, re.IGNORECASE):
+        if re.search(pattern, cleaned_text, re.IGNORECASE):
             logger.warning("Mermaid security check failed: Detected potential XSS vector.")
             raise InvalidMermaidError("Rilevato potenziale contenuto XSS non sicuro nell'output.")
 
-    return cleaned
+    return cleaned_text
