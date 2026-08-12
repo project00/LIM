@@ -195,7 +195,7 @@ def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> No
     data = resp.json()
     assert data["type"] == "concept_map"
     assert data["source"] == "remote_llm"
-    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]
+    assert "Impossibile generare la mappa concettuale" in data["mermaid_code"]
 
 
 @patch("litellm.completion")
@@ -231,7 +231,7 @@ def test_concept_map_xss_integration_rejection(mock_completion: MagicMock) -> No
     data = resp.json()
     assert data["type"] == "concept_map"
     assert data["source"] == "remote_llm"
-    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]
+    assert "Impossibile generare la mappa concettuale" in data["mermaid_code"]
 
 
 @patch("litellm.completion")
@@ -267,4 +267,4 @@ def test_concept_map_empty_integration_rejection(mock_completion: MagicMock) -> 
     data = resp.json()
     assert data["type"] == "concept_map"
     assert data["source"] == "remote_llm"
-    assert "Mappa concettuale non renderizzabile, riprovare" in data["mermaid_code"]
+    assert "Impossibile generare la mappa concettuale" in data["mermaid_code"]

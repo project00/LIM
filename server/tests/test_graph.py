@@ -63,6 +63,7 @@ def test_mermaid_validation_totally_invalid():
 
 def test_generate_concept_map_fallback_on_invalid_output(monkeypatch):
     """Verifica che generate_concept_map restituisca il diagramma di fallback pulito se l'output dell'LLM è invalido."""
+    from services.graph_service import INVALID_MERMAID_FALLBACK
     mock_response = MagicMock()
     mock_choice = MagicMock()
     # Output completamente non interpretabile che non contiene relazioni o parole chiave
@@ -79,9 +80,70 @@ def test_generate_concept_map_fallback_on_invalid_output(monkeypatch):
         llm_api_base="http://localhost:11434"
     )
 
-    # Dovrebbe restituire il diagramma di fallback di sicurezza
-    assert result == FALLBACK_MERMAID_DIAGRAM
-    assert "Mappa concettuale non renderizzabile" in result
+    # Dovrebbe restituire il diagramma di fallback per errore di validazione
+    assert result == INVALID_MERMAID_FALLBACK
+    assert "Impossibile generare la mappa concettuale" in result
+
+def test_generate_concept_map_fallback_invalid_mermaid_error(monkeypatch):
+    """Verifica che generate_concept_map intercetti InvalidMermaidError e restituisca INVALID_MERMAID_FALLBACK."""
+    from services.graph_service import INVALID_MERMAID_FALLBACK
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    # Questo testo scatenerà esplicitamente un InvalidMermaidError (vuoto o non conforme)
+    mock_choice.message.content = ""
+    mock_response.choices = [mock_choice]
+
+    monkeypatch.setattr(litellm, "completion", lambda **kwargs: mock_response)
+
+    result = generate_concept_map(
+        topic="argomento_vuoto",
+        language="it",
+        llm_model="qwen-4b",
+        llm_api_key="mock-key",
+        llm_api_base="http://localhost:11434"
+    )
+
+    assert result == INVALID_MERMAID_FALLBACK
+    assert "Impossibile generare la mappa concettuale" in result
+
+def test_generate_concept_map_alternative_content_extraction(monkeypatch):
+    """Verifica che generate_concept_map estragga il contenuto da campi alternativi come reasoning_content o text."""
+    # Scenario A: reasoning_content popolato su messaggio
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    del mock_choice.message.content
+    mock_choice.message.reasoning_content = "graph TD\n    A[\"Reasoning\"] --> B[\"Done\"]"
+    mock_choice.message.text = None
+    mock_response.choices = [mock_choice]
+
+    monkeypatch.setattr(litellm, "completion", lambda **kwargs: mock_response)
+
+    result = generate_concept_map(
+        topic="test",
+        language="it",
+        llm_model="qwen-4b",
+        llm_api_key="mock-key",
+        llm_api_base="http://localhost:11434"
+    )
+    assert "Reasoning" in result
+
+    # Scenario B: text popolato su scelta (choice)
+    mock_response_b = MagicMock()
+    mock_choice_b = MagicMock()
+    del mock_choice_b.message
+    mock_choice_b.text = "graph TD\n    A[\"TextOnChoice\"] --> B[\"Done\"]"
+    mock_response_b.choices = [mock_choice_b]
+
+    monkeypatch.setattr(litellm, "completion", lambda **kwargs: mock_response_b)
+
+    result_b = generate_concept_map(
+        topic="test",
+        language="it",
+        llm_model="qwen-4b",
+        llm_api_key="mock-key",
+        llm_api_base="http://localhost:11434"
+    )
+    assert "TextOnChoice" in result_b
 
 def test_generate_concept_map_success(monkeypatch):
     """Test standard di successo del servizio di generazione della mappa concettuale."""

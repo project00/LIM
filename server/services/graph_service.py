@@ -18,8 +18,12 @@ from services.mermaid_validator import validate_and_sanitize_mermaid, InvalidMer
 
 logger = logging.getLogger("server_graph_service")
 
-# Costante del diagramma Mermaid di fallback valido e minimo
+# Costanti del diagramma Mermaid di fallback valido e minimo
 FALLBACK_MERMAID_DIAGRAM = 'graph TD\n    ERROR_NODE["Mappa concettuale non renderizzabile, riprovare"]'
+INVALID_MERMAID_FALLBACK = (
+    "graph TD\n"
+    "    A[\"Impossibile generare la mappa concettuale\"] --> B[\"Riprova con un altro argomento\"]"
+)
 
 def generate_concept_map(
     topic: str,
@@ -69,11 +73,71 @@ def generate_concept_map(
 
     try:
         response = litellm.completion(**completion_args)
-        content = response.choices[0].message.content or ""
-        # Run strict validation and sanitization
+    except Exception as e:
+        logger.error("Errore durante la chiamata LiteLLM completion: %s", e, exc_info=True)
+        return FALLBACK_MERMAID_DIAGRAM
+
+    # 1. Rafforzare l'estrazione dell'output di LiteLLM
+    content = None
+    if response and hasattr(response, "choices") and response.choices:
+        choice = response.choices[0]
+        if hasattr(choice, "message") and choice.message:
+            msg = choice.message
+
+            # Check content
+            val = getattr(msg, "content", None)
+            if isinstance(val, str):
+                content = val
+            elif isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                content = msg.get("content")
+
+            # Check reasoning_content
+            if not content:
+                val = getattr(msg, "reasoning_content", None)
+                if isinstance(val, str):
+                    content = val
+                elif isinstance(msg, dict) and isinstance(msg.get("reasoning_content"), str):
+                    content = msg.get("reasoning_content")
+
+            # Check text
+            if not content:
+                val = getattr(msg, "text", None)
+                if isinstance(val, str):
+                    content = val
+                elif isinstance(msg, dict) and isinstance(msg.get("text"), str):
+                    content = msg.get("text")
+
+        # Fallback check on the choice object itself
+        if not content:
+            val = getattr(choice, "text", None)
+            if isinstance(val, str):
+                content = val
+            elif isinstance(choice, dict) and isinstance(choice.get("text"), str):
+                content = choice.get("text")
+
+    # Fallback on raw response if still empty
+    if not content and response:
+        if isinstance(response, dict):
+            val = response.get("text") or response.get("content")
+            if isinstance(val, str):
+                content = val
+        else:
+            val = getattr(response, "text", None) or getattr(response, "content", None)
+            if isinstance(val, str):
+                content = val
+
+    # Se content è ancora vuoto, registra nei log l'oggetto grezzo restituito da LiteLLM
+    if not content:
+        logger.error(f"LiteLLM raw response: {response}")
+        content = ""
+
+    # 2. Gestione dell'eccezione e Diagramma di Fallback
+    try:
         sanitized_mermaid = validate_and_sanitize_mermaid(content)
         return sanitized_mermaid
+    except InvalidMermaidError as ime:
+        logger.error("Errore di validazione Mermaid: %s", ime, exc_info=True)
+        return INVALID_MERMAID_FALLBACK
     except Exception as e:
-        logger.error("Errore durante la generazione o validazione del diagramma Mermaid: %s", e, exc_info=True)
-        # Se il codice generato dall'LLM è irrecuperabile o fallisce l'API, restituisce il fallback minimo e pulito
+        logger.error("Errore generico durante la validazione del diagramma Mermaid: %s", e, exc_info=True)
         return FALLBACK_MERMAID_DIAGRAM
