@@ -106,10 +106,12 @@ def test_concept_map_generation_success(mock_completion: MagicMock) -> None:
     assert called_kwargs["model"] == "gpt-4o-mini"
     assert called_kwargs["api_key"] == "test_provider_key"
     messages = called_kwargs["messages"]
-    assert len(messages) == 1
-    assert "apparato circolatorio" in messages[0]["content"]
-    assert "it" in messages[0]["content"]
-    assert "Mermaid" in messages[0]["content"]
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert "generatore di codice Mermaid.js" in messages[0]["content"]
+    assert messages[1]["role"] == "user"
+    assert "apparato circolatorio" in messages[1]["content"]
+    assert "it" in messages[1]["content"]
 
 
 def test_mermaid_validator_valid_passes() -> None:
@@ -170,7 +172,7 @@ def test_concept_map_invalid_mermaid_rejection(mock_completion: MagicMock) -> No
 
     # Configure the mock response with invalid output
     mock_choice = MagicMock()
-    mock_choice.message.content = "Here is your diagram:\ngraph TD\n  A --> B"
+    mock_choice.message.content = "Here is your diagram:\nnot_a_valid_keyword TD\n  A --> B"
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
     mock_completion.return_value = mock_response

@@ -32,25 +32,35 @@ def validate_and_sanitize_mermaid(code: str) -> str:
     Raises:
         InvalidMermaidError: with a clear validation error code/detail.
     """
-    if not code:
+    if not code or not code.strip():
         raise InvalidMermaidError("Il contenuto generato dal modello è vuoto.")
 
     cleaned = code.strip()
 
-    # 1. Strip Markdown code fences if the model included them
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        if len(lines) >= 2:
-            if lines[0].strip().startswith("```"):
-                lines = lines[1:]
-            if lines[-1].strip().startswith("```"):
-                lines = lines[:-1]
-            cleaned = "\n".join(lines).strip()
-
-    cleaned = cleaned.replace("```mermaid", "").replace("```", "").strip()
+    # 1. Strip Markdown code fences if the model included them (either at start or nested)
+    match = re.search(r"```(?:mermaid)?([\s\S]*?)```", cleaned, re.IGNORECASE)
+    if match:
+        cleaned = match.group(1).strip()
+    else:
+        # Otherwise, remove any occurrences of ```mermaid or ``` if they exist
+        cleaned = re.sub(r"```mermaid", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.replace("```", "").strip()
 
     if not cleaned:
         raise InvalidMermaidError("Il contenuto generato è vuoto dopo la rimozione dei code fences.")
+
+    # Find the earliest starting keyword that starts a line (with optional leading whitespace)
+    valid_keywords = ("graph", "flowchart", "mindmap")
+    earliest_idx = -1
+    for kw in valid_keywords:
+        m = re.search(r"^\s*" + kw + r"\b", cleaned, re.IGNORECASE | re.MULTILINE)
+        if m:
+            idx = m.start()
+            if earliest_idx == -1 or idx < earliest_idx:
+                earliest_idx = idx
+
+    if earliest_idx != -1:
+        cleaned = cleaned[earliest_idx:].strip()
 
     # 2. Check starting keyword (graph, flowchart, mindmap)
     first_non_empty_line = ""
@@ -61,7 +71,6 @@ def validate_and_sanitize_mermaid(code: str) -> str:
             break
 
     first_line_lower = first_non_empty_line.lower()
-    valid_keywords = ("graph", "flowchart", "mindmap")
     if not any(first_line_lower.startswith(kw) for kw in valid_keywords):
         logger.warning("Mermaid validation failed: Invalid starting keyword.")
         raise InvalidMermaidError(

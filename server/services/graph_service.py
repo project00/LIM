@@ -40,17 +40,25 @@ def generate_concept_map(
     """
     logger.info("Generating concept map for topic: '%s' in language: '%s'", topic, language)
 
-    prompt = (
-        f"Generate a concept map using only valid Mermaid graph/flowchart syntax on the topic: '{topic}' "
-        f"in the language: '{language}'.\n"
-        "Your output must consist ONLY of valid Mermaid graph syntax. "
-        "Do not include any explanations, do not include markdown code fences (like ```mermaid), and do not include backticks."
+    system_prompt = (
+        "Sei un generatore di codice Mermaid.js. Devi generare una mappa concettuale sull'argomento richiesto.\n"
+        "REGOLE OBBLIGATORIE:\n"
+        "1. Inizia SEMPRE la risposta con `graph TD`\n"
+        "2. Usa SOLO connettori validi: `-->`\n"
+        "3. Rinchiudi SEMPRE il testo dei nodi tra parentesi quadre e virgolette doppie. Esempio: ID[\"Testo del nodo\"]\n"
+        "4. NON usare classi CSS (nessun `:::`).\n"
+        "5. Restituisci SOLO il codice Mermaid puro, senza blocchi markdown, senza backtick e senza testo introduttivo."
     )
+
+    user_prompt = f"Topic: {topic}, Language: {language}"
 
     # Call LiteLLM completion with only configured parameters
     completion_args = {
         "model": llm_model,
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
     }
     if llm_api_key:
         completion_args["api_key"] = llm_api_key
