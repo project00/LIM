@@ -220,9 +220,14 @@ def test_get_outgoing_headers_sketchfab():
 
     settings.credentials = []
 
-    # load_3d_model throws if no Sketchfab credential is enabled
+    # search_3d_models throws if no Sketchfab credential is enabled
     with pytest.raises(MissingCredentialsError) as exc_info:
-        get_outgoing_headers("load_3d_model", {})
+        get_outgoing_headers("search_3d_models", {})
+    assert "Nessuna credenziale Sketchfab" in str(exc_info.value)
+
+    # select_3d_model throws if no Sketchfab credential is enabled
+    with pytest.raises(MissingCredentialsError) as exc_info:
+        get_outgoing_headers("select_3d_model", {})
     assert "Nessuna credenziale Sketchfab" in str(exc_info.value)
 
     # Enable Sketchfab
@@ -235,8 +240,11 @@ def test_get_outgoing_headers_sketchfab():
             access_token="sf-token-12345",
         )
     ]
-    headers = get_outgoing_headers("load_3d_model", {})
+    headers = get_outgoing_headers("search_3d_models", {})
     assert headers["X-Sketchfab-Token"] == "sf-token-12345"
+
+    headers2 = get_outgoing_headers("select_3d_model", {})
+    assert headers2["X-Sketchfab-Token"] == "sf-token-12345"
 
 
 def test_websocket_instant_missing_credentials_failure():

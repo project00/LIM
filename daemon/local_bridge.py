@@ -288,7 +288,7 @@ def get_outgoing_headers(action: str, payload_data: dict) -> dict:
                 )
 
     # 2. Sketchfab action check
-    if action == "load_3d_model":
+    if action in ("search_3d_models", "select_3d_model"):
         active_sf = next(
             (c for c in settings.credentials if c.enabled and c.type == "sketchfab"),
             None,
@@ -319,7 +319,8 @@ class ModelRouter:
         "stop_transcription": RouteTarget.LOCAL,
         "text_to_speech": RouteTarget.LOCAL,
         "concept_map": RouteTarget.REMOTE,
-        "load_3d_model": RouteTarget.REMOTE,
+        "search_3d_models": RouteTarget.REMOTE,
+        "select_3d_model": RouteTarget.REMOTE,
         "generate_quiz": RouteTarget.REMOTE,
     }
 
@@ -331,34 +332,32 @@ class ModelRouter:
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "model_cache"))
 
 
-async def handle_load_3d_model(
-    query: str,
+async def handle_select_3d_model(
+    uid: str,
     http_client: httpx.AsyncClient,
     payload: dict,
     custom_headers: dict | None = None,
 ) -> dict:
     """
-    Handles loading a 3D model with local caching on the daemon.
-    Checks the local cache first by hashing the query. If a hit occurs, serves it immediately.
+    Handles selecting a 3D model with local caching on the daemon by its UID.
+    Checks the local cache first using the UID. If a hit occurs, serves it immediately.
     On a miss, fetches from the remote server, downloads any external assets, caches them,
     and returns the local file URL path.
     """
-    q_clean = query.lower().strip()
-    cache_key = hashlib.sha256(q_clean.encode("utf-8")).hexdigest()
-    model_dir = os.path.join(CACHE_DIR, cache_key)
+    model_dir = os.path.join(CACHE_DIR, uid)
     metadata_file = os.path.join(model_dir, "metadata.json")
     gltf_file = os.path.join(model_dir, "scene.gltf")
 
     # Cache HIT
     if os.path.exists(metadata_file) and os.path.exists(gltf_file):
-        logger.info("Local Daemon Cache HIT for 3D model query: '%s'", query)
+        logger.info("Local Daemon Cache HIT for 3D model UID: '%s'", uid)
         try:
             with open(metadata_file, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
             return {
                 "type": "model_3d",
                 "source": "remote_index",
-                "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
+                "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{uid}/scene.gltf",
                 "label": metadata["title"],
                 "attribution": metadata["attribution"],
             }
@@ -366,7 +365,7 @@ async def handle_load_3d_model(
             logger.error("Failed to read metadata.json from local cache: %s", e)
 
     # Cache MISS
-    logger.info("Local Daemon Cache MISS for 3D model query: '%s'", query)
+    logger.info("Local Daemon Cache MISS for 3D model UID: '%s'", uid)
 
     remote_analyze_url = f"{settings.remote_base_url}/api/v1/analyze"
     headers = (
@@ -389,8 +388,8 @@ async def handle_load_3d_model(
     # Extract base remote model folder
     parts = remote_model_url.strip("/").split("/")
     if len(parts) >= 2 and parts[0] == "models":
-        uid = parts[1]
-        remote_base = f"/models/{uid}"
+        remote_uid = parts[1]
+        remote_base = f"/models/{remote_uid}"
     else:
         remote_base = os.path.dirname(remote_model_url)
 
@@ -433,12 +432,12 @@ async def handle_load_3d_model(
             logger.info("Daemon cached dependent resource: '%s'", uri)
 
     except Exception as e:
-        logger.error("Failed to cache dependent assets for model %s: %s", query, e)
+        logger.error("Failed to cache dependent assets for model UID %s: %s", uid, e)
 
     # Save metadata
     metadata = {
-        "uid": response_data.get("uid", cache_key),
-        "title": response_data.get("label", query),
+        "uid": response_data.get("uid", uid),
+        "title": response_data.get("label", uid),
         "attribution": response_data.get("attribution", {}),
     }
     with open(metadata_file, "w", encoding="utf-8") as f:
@@ -447,7 +446,7 @@ async def handle_load_3d_model(
     return {
         "type": "model_3d",
         "source": "remote_index",
-        "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{cache_key}/scene.gltf",
+        "model_url": f"http://{DAEMON_HOST}:{DAEMON_PORT}/models_cache/{uid}/scene.gltf",
         "label": metadata["title"],
         "attribution": metadata["attribution"],
     }
@@ -1057,11 +1056,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
 
                     try:
-                        if action == "load_3d_model":
-                            query = payload.get("data", {}).get("query")
-                            if query:
-                                res_metadata = await handle_load_3d_model(
-                                    query, http_client, payload, custom_headers
+                        if action == "select_3d_model":
+                            uid = payload.get("data", {}).get("uid")
+                            if uid:
+                                res_metadata = await handle_select_3d_model(
+                                    uid, http_client, payload, custom_headers
                                 )
                                 await send_and_backup(
                                     websocket, res_metadata, backup_path
