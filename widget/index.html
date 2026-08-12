@@ -159,6 +159,11 @@
                     return;
                 }
 
+                if (data.action === "concept_map_status") {
+                    handleConceptMapStatus(data);
+                    return;
+                }
+
                 if (data.type === "system_warning") {
                     setSystemState(SYSTEM_STATES.DEGRADED, data.message);
                     return;
@@ -195,6 +200,29 @@
                     reconnectTimeoutId = setTimeout(connectWebSocket, 3000);
                 }
             };
+        }
+
+        function handleConceptMapStatus(data) {
+            const out = document.getElementById("output");
+            if (!out) return;
+
+            if (data.status === "loading") {
+                out.innerHTML = `
+                    <div id="concept-map-spinner" style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 200px;">
+                        <div class="spinner" style="border: 4px solid rgba(255, 255, 255, 0.1); width: 42px; height: 42px; border-radius: 50%; border-left-color: #89b4fa; animation: spin 1s linear infinite;"></div>
+                        <style>
+                            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                        </style>
+                        <p style="margin-top: 15px; font-weight: bold; color: #89b4fa;">${escapeHTML(data.message)}</p>
+                    </div>
+                `;
+            } else if (data.status === "error") {
+                out.innerHTML = `
+                    <div style="color: #f38ba8; font-weight: bold; text-align: center; margin-top: 50px;">
+                        ⚠️ ${escapeHTML(data.message)}
+                    </div>
+                `;
+            }
         }
 
         function setSystemState(newState, message = "") {

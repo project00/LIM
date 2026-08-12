@@ -798,7 +798,7 @@ async def websocket_endpoint(websocket: WebSocket):
     transcription_session = TranscriptionSession()
 
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(settings.remote_action_timeout_seconds, connect=5.0)
+        timeout=httpx.Timeout(300.0, connect=5.0)
     ) as http_client:
         try:
             while True:
@@ -1079,11 +1079,45 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
                         req_headers.update(custom_headers)
 
-                        response = await http_client.post(
-                            remote_analyze_url, json=payload, headers=req_headers
-                        )
-                        response.raise_for_status()
-                        await send_and_backup(websocket, response.text, backup_path)
+                        if action == "concept_map":
+                            await websocket.send_text(json.dumps({
+                                "action": "concept_map_status",
+                                "status": "loading",
+                                "message": "Generazione della mappa in corso..."
+                            }))
+
+                        try:
+                            response = await http_client.post(
+                                remote_analyze_url, json=payload, headers=req_headers
+                            )
+                            response.raise_for_status()
+
+                            if action == "concept_map":
+                                await websocket.send_text(json.dumps({
+                                    "action": "concept_map_status",
+                                    "status": "completed",
+                                    "message": "Mappa generata!"
+                                }))
+
+                            await send_and_backup(websocket, response.text, backup_path)
+                        except httpx.TimeoutException as e:
+                            logger.error(f"Timeout during remote action {action}: {e}")
+                            if action == "concept_map":
+                                await websocket.send_text(json.dumps({
+                                    "action": "concept_map_status",
+                                    "status": "error",
+                                    "message": "Tempo scaduto per la generazione della mappa (timeout)."
+                                }))
+                            raise
+                        except Exception as e:
+                            logger.error(f"Error during remote action {action}: {e}")
+                            if action == "concept_map":
+                                await websocket.send_text(json.dumps({
+                                    "action": "concept_map_status",
+                                    "status": "error",
+                                    "message": f"Errore durante la generazione della mappa: {str(e)}"
+                                }))
+                            raise
 
                     except (httpx.ConnectError, httpx.TimeoutException):
                         logger.warning(
