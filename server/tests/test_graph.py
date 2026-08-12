@@ -182,3 +182,57 @@ def test_generate_concept_map_success(monkeypatch):
     assert "graph TD" in messages[0]["content"]
     assert messages[1]["role"] == "user"
     assert "Topic: acqua" in messages[1]["content"]
+
+def test_generate_concept_map_litellm_optimization_and_cleaning(monkeypatch):
+    """Verifica che i parametri LiteLLM siano ottimizzati e che l'output venga ripulito da <think> e delimitatori markdown."""
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    # Output contenente tag <think> (CoT internal) e delimitatori markdown
+    mock_choice.message.content = (
+        "<think>Ragionamento del modello Ollama/Qwen...\n"
+        "Voglio proporre un diagramma semplice.</think>\n"
+        "```mermaid\n"
+        "graph TD\n"
+        "    A[\"Inizio\"] --> B[\"Fine\"]\n"
+        "```"
+    )
+    mock_response.choices = [mock_choice]
+
+    captured_args = {}
+
+    def mock_completion(**kwargs):
+        captured_args.update(kwargs)
+        return mock_response
+
+    monkeypatch.setattr(litellm, "completion", mock_completion)
+
+    result = generate_concept_map(
+        topic="ottimizzazione",
+        language="it",
+        llm_model="qwen-4b",
+        llm_api_key="mock-key",
+        llm_api_base="http://localhost:11434"
+    )
+
+    # 1. Verifica i parametri di completamento LiteLLM
+    assert captured_args.get("temperature") == 0.0
+    assert captured_args.get("extra_body") == {
+        "options": {
+            "num_ctx": 8192,
+            "temperature": 0.0
+        }
+    }
+
+    # 2. Verifica che i tag <think> e i backtick siano stati rimossi prima della validazione
+    assert result.startswith("graph TD")
+    assert "Ragionamento del modello" not in result
+    assert "<think>" not in result
+    assert "```" not in result
+
+    # 3. Verifica le nuove istruzioni nel system prompt
+    messages = captured_args.get("messages")
+    assert messages is not None
+    system_prompt = messages[0]["content"]
+    assert "tag <think>" in system_prompt
+    assert "Chain of Thought" in system_prompt or "CoT" in system_prompt
+    assert "TASSATIVAMENTE" in system_prompt

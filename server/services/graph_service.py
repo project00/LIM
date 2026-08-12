@@ -11,6 +11,7 @@ Design Note:
 
 import logging
 import os
+import re
 import litellm
 
 # Import Mermaid validation helpers
@@ -53,7 +54,8 @@ def generate_concept_map(
         "1. Inizia la risposta TASSATIVAMENTE con `graph TD`.\n"
         "2. NON usare alcun tipo di stile CSS in-line o classi custom (nessun `:::`).\n"
         "3. Racchiudi ESPLICITAMENTE il testo di ogni singolo nodo tra virgolette doppie. Esempio: ID[\"Testo del nodo\"]\n"
-        "4. Restituisci UNICAMENTE la struttura del grafico, senza alcuna introduzione, convenevole o spiegazione conversazionale."
+        "4. Restituisci UNICAMENTE la struttura del grafico, senza alcuna introduzione, convenevole o spiegazione conversazionale.\n"
+        "5. È TASSATIVAMENTE VIETATO usare i tag <think>...</think> o produrre qualsiasi tipo di ragionamento Chain of Thought (CoT). Non includere nessun pensiero o passaggio intermedio, scrivi direttamente la struttura del grafico."
     )
 
     user_prompt = f"Topic: {topic}, Language: {language}"
@@ -61,10 +63,17 @@ def generate_concept_map(
     # Call LiteLLM completion with only configured parameters
     completion_args = {
         "model": llm_model,
+        "temperature": 0.0,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
-        ]
+        ],
+        "extra_body": {
+            "options": {
+                "num_ctx": 8192,
+                "temperature": 0.0
+            }
+        }
     }
     if llm_api_key:
         completion_args["api_key"] = llm_api_key
@@ -130,6 +139,11 @@ def generate_concept_map(
     if not content:
         logger.error(f"LiteLLM raw response: {response}")
         content = ""
+
+    # Pulizia e Sanificazione dell'Output (Pre-validazione)
+    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+    content = re.sub(r'```(?:mermaid)?', '', content)
+    content = content.strip()
 
     # 2. Gestione dell'eccezione e Diagramma di Fallback
     try:
