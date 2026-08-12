@@ -14,9 +14,12 @@ import os
 import litellm
 
 # Import Mermaid validation helpers
-from services.mermaid_validator import validate_and_sanitize_mermaid
+from services.mermaid_validator import validate_and_sanitize_mermaid, InvalidMermaidError
 
 logger = logging.getLogger("server_graph_service")
+
+# Costante del diagramma Mermaid di fallback valido e minimo
+FALLBACK_MERMAID_DIAGRAM = 'graph TD\n    ERROR_NODE["Mappa concettuale non renderizzabile, riprovare"]'
 
 def generate_concept_map(
     topic: str,
@@ -43,11 +46,10 @@ def generate_concept_map(
     system_prompt = (
         "Sei un generatore di codice Mermaid.js. Devi generare una mappa concettuale sull'argomento richiesto.\n"
         "REGOLE OBBLIGATORIE:\n"
-        "1. Inizia SEMPRE la risposta con `graph TD`\n"
-        "2. Usa SOLO connettori validi: `-->`\n"
-        "3. Rinchiudi SEMPRE il testo dei nodi tra parentesi quadre e virgolette doppie. Esempio: ID[\"Testo del nodo\"]\n"
-        "4. NON usare classi CSS (nessun `:::`).\n"
-        "5. Restituisci SOLO il codice Mermaid puro, senza blocchi markdown, senza backtick e senza testo introduttivo."
+        "1. Inizia la risposta TASSATIVAMENTE con `graph TD`.\n"
+        "2. NON usare alcun tipo di stile CSS in-line o classi custom (nessun `:::`).\n"
+        "3. Racchiudi ESPLICITAMENTE il testo di ogni singolo nodo tra virgolette doppie. Esempio: ID[\"Testo del nodo\"]\n"
+        "4. Restituisci UNICAMENTE la struttura del grafico, senza alcuna introduzione, convenevole o spiegazione conversazionale."
     )
 
     user_prompt = f"Topic: {topic}, Language: {language}"
@@ -65,10 +67,13 @@ def generate_concept_map(
     if llm_api_base:
         completion_args["api_base"] = llm_api_base
 
-    response = litellm.completion(**completion_args)
-
-    content = response.choices[0].message.content or ""
-
-    # Run strict validation and sanitization
-    sanitized_mermaid = validate_and_sanitize_mermaid(content)
-    return sanitized_mermaid
+    try:
+        response = litellm.completion(**completion_args)
+        content = response.choices[0].message.content or ""
+        # Run strict validation and sanitization
+        sanitized_mermaid = validate_and_sanitize_mermaid(content)
+        return sanitized_mermaid
+    except Exception as e:
+        logger.error("Errore durante la generazione o validazione del diagramma Mermaid: %s", e, exc_info=True)
+        # Se il codice generato dall'LLM è irrecuperabile o fallisce l'API, restituisce il fallback minimo e pulito
+        return FALLBACK_MERMAID_DIAGRAM
