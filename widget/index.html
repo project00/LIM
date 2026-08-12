@@ -49,6 +49,52 @@
         /* Content Display Area */
         #output-container { background: #181825; padding: 10px; border-radius: 8px; border: 1px solid #313244; min-height: 320px; max-height: 420px; overflow-y: auto; }
         model-viewer { width: 100%; height: 300px; }
+
+        /* Mermaid Map Container styling */
+        .mermaid-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff; /* Sfondo chiaro per armonizzare con temi 'default' o 'neutral' e renderlo perfettamente leggibile */
+            color: #1e1e2e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #cdd6f4;
+            margin: 10px 0;
+            width: 100%;
+            box-sizing: border-box;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+        }
+        .mermaid-container svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        .mermaid-error {
+            background: #242535;
+            color: #f38ba8;
+            border: 1px solid #f38ba8;
+            padding: 12px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 13px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mermaid-raw-code {
+            font-family: monospace;
+            background: #181825;
+            color: #a6adc8;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #45475a;
+            white-space: pre-wrap;
+            margin-top: 8px;
+            font-size: 11px;
+            overflow-x: auto;
+            text-align: left;
+        }
     </style>
 </head>
 <body>
@@ -107,7 +153,21 @@
     </main>
 
     <script>
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'neutral',
+            securityLevel: 'loose',
+            suppressErrorRendering: true,
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+
+        // Supprimiamo la visualizzazione predefinita dell'errore di sintassi sulla pagina
+        mermaid.parseError = function(err, hash) {
+            console.warn("Mermaid parsing error suppressed:", err);
+        };
 
         const SYSTEM_STATES = {
             ONLINE: { class: "status-online", text: "🟢 Online (Full AI)" },
@@ -259,7 +319,7 @@
             checkSubtitleConnectionState();
         }
 
-        function renderData(data) {
+        async function renderData(data) {
             if (!data) return;
 
             if (data.type === "error") {
@@ -364,13 +424,46 @@
                     Plotly.newPlot(chartContainer, [trace], layout, config);
                 }
             } else if (data.type === "concept_map") {
+                const rawCode = data.mermaid_code || "";
+                const sanitizedCode = sanitizeMermaidCode(rawCode);
+
                 lessonLog.push({
                     type: "concept_map",
-                    content: `Mappa concettuale: ${data.mermaid_code}`,
+                    content: `Mappa concettuale: ${sanitizedCode}`,
                     timestamp: new Date().toISOString()
                 });
-                out.innerHTML = `<pre class="mermaid">${data.mermaid_code}</pre>`;
-                mermaid.run();
+
+                if (!sanitizedCode) {
+                    out.innerHTML = `
+                        <div class="mermaid-error">
+                            <strong>⚠️ Mappa non generabile</strong>
+                            <p>Il codice della mappa concettuale generato dall'AI è vuoto o non valido.</p>
+                            <div class="mermaid-raw-code">${escapeHTML(rawCode)}</div>
+                        </div>
+                    `;
+                } else {
+                    // Genera un ID univoco per il rendering di questa istanza del diagramma
+                    const uniqueId = `mermaid-render-${Date.now()}`;
+                    try {
+                        // Utilizziamo l'API render di Mermaid.js per catturare e gestire eventuali eccezioni di sintassi
+                        const { svg } = await mermaid.render(uniqueId, sanitizedCode);
+                        out.innerHTML = `<div class="mermaid-container">${svg}</div>`;
+                    } catch (error) {
+                        console.error("Errore di rendering Mermaid.js:", error);
+                        // Rimuoviamo l'elemento temporaneo inserito da Mermaid.js nel body che altrimenti rimarrebbe orfano
+                        const leakedEl = document.getElementById(`d${uniqueId}`);
+                        if (leakedEl) {
+                            leakedEl.remove();
+                        }
+                        out.innerHTML = `
+                            <div class="mermaid-error">
+                                <strong>⚠️ Mappa non generabile (Errore di sintassi)</strong>
+                                <p>Non è stato possibile renderizzare la mappa concettuale a causa di un errore di sintassi nel codice generato dall'AI.</p>
+                                <div class="mermaid-raw-code">${escapeHTML(sanitizedCode)}</div>
+                            </div>
+                        `;
+                    }
+                }
             } else if (data.type === "model_3d") {
                 let html = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
 
@@ -756,6 +849,75 @@
                     }));
                 }
             }
+        }
+
+        function sanitizeMermaidCode(text) {
+            if (!text) return "";
+
+            // 1. Rimuovi blocchi di codice markdown (```mermaid ... ``` o ``` ... ```)
+            let cleaned = text;
+
+            // Cerca prima il blocco ```mermaid o ``` e cattura tutto quello che c'è all'interno
+            const markdownRegex = /```(?:mermaid)?([\s\S]*?)```/i;
+            const match = markdownRegex.exec(cleaned);
+            if (match) {
+                cleaned = match[1];
+            } else {
+                // Se non ci sono blocchi markdown ma ci sono frammenti residui isolati come ``` o ```mermaid
+                cleaned = cleaned.replace(/```mermaid/gi, "").replace(/```/g, "");
+            }
+
+            // 2. Rimuovi eventuale testo introduttivo/conclusivo
+            // Mermaid di solito inizia con graph, flowchart, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, journey, gitGraph, C4Diagram, mindmap, timeline, zenuml, sankey, xyChart, block, packet, kanban, architecture, db, ecc.
+            const mermaidKeywords = [
+                "graph", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram",
+                "erDiagram", "gantt", "pie", "journey", "gitGraph", "C4Diagram", "mindmap",
+                "timeline", "zenuml", "sankey", "xyChart", "block", "packet", "kanban", "architecture"
+            ];
+
+            // Troviamo la prima occorrenza di una delle keyword di Mermaid
+            let earliestIndex = -1;
+            let matchedKeyword = "";
+            for (const kw of mermaidKeywords) {
+                const regex = new RegExp("\\b" + kw + "\\b", "i");
+                const searchMatch = regex.exec(cleaned);
+                if (searchMatch) {
+                    const idx = searchMatch.index;
+                    if (earliestIndex === -1 || idx < earliestIndex) {
+                        earliestIndex = idx;
+                        matchedKeyword = kw;
+                    }
+                }
+            }
+
+            if (earliestIndex !== -1) {
+                // Estrai a partire dalla keyword trovata
+                cleaned = cleaned.substring(earliestIndex);
+            }
+
+            // Pulizia finale degli spazi bianchi, ritorni a capo e righe vuote prima/dopo
+            cleaned = cleaned.trim();
+
+            // Alcuni LLM potrebbero generare testo conversazionale in fondo;
+            // cerchiamo di tagliare via tutto quello che segue l'ultimo elemento valido se finisce con testo strano.
+            // In genere non c'è una chiusura fissa per Mermaid, ma possiamo rimuovere righe finali isolate che contengono spiegazioni o commenti (purché non siano commenti Mermaid che iniziano con %%)
+            const lines = cleaned.split("\n");
+            const cleanedLines = [];
+            let inDiagram = true;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+
+                // Se incontriamo una linea in fondo che sembra testo descrittivo non-mermaid (es. "Spero che questa mappa...", "Ecco la mappa...")
+                // In genere le righe di Mermaid contengono freccia (-->), due punti (:), parentesi, o definiscono nodi/connessioni.
+                // Se siamo oltre la prima metà delle righe e troviamo una riga puramente testuale senza sintassi tipica di Mermaid, potremmo interrompere.
+                // Tuttavia per sicurezza, evitiamo euristiche troppo aggressive per non tagliare nodi validi.
+                // Rimuoviamo però righe che iniziano chiaramente con markdown estraneo o spiegazioni se il diagramma è già terminato.
+                cleanedLines.push(lines[i]);
+            }
+
+            cleaned = cleanedLines.join("\n").trim();
+            return cleaned;
         }
 
         function escapeHTML(str) {
