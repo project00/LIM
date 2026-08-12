@@ -232,6 +232,8 @@ async def test_remote_reachable_analyze() -> None:
                 "data": {"topic": "apparato circolatorio"}
             }))
             response = websocket.receive_json()
+            while "type" not in response:
+                response = websocket.receive_json()
             assert response["type"] == "concept_map"
             assert response["source"] == "remote_llm"
             assert "Cuore-->Arterie" in response["mermaid_code"]
@@ -252,6 +254,8 @@ async def test_remote_timeout_fallback() -> None:
                 "data": {"topic": "apparato circolatorio"}
             }))
             response = websocket.receive_json()
+            while "type" not in response:
+                response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
 
@@ -273,6 +277,8 @@ async def test_remote_connection_error_fallback() -> None:
                 "data": {"topic": "apparato circolatorio"}
             }))
             response = websocket.receive_json()
+            while "type" not in response:
+                response = websocket.receive_json()
             assert response["type"] == "system_warning"
             assert "offline" in response["message"]
 
@@ -1162,7 +1168,7 @@ async def test_transcription_backups_successfully() -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_3d_model_local_caching() -> None:
+async def test_select_3d_model_local_caching() -> None:
     """
     Tests that the local daemon caches 3D models upon first download,
     rewrites model_url in response sent to the widget, and serves directly
@@ -1220,8 +1226,8 @@ async def test_load_3d_model_local_caching() -> None:
         # First request (Cache MISS)
         with client.websocket_connect("/ws") as websocket:
             websocket.send_text(json.dumps({
-                "action": "load_3d_model",
-                "data": {"query": "H2O Molecule"}
+                "action": "select_3d_model",
+                "data": {"uid": "model_uid_xyz"}
             }))
             response1 = websocket.receive_json()
 
@@ -1244,8 +1250,8 @@ async def test_load_3d_model_local_caching() -> None:
 
         with client.websocket_connect("/ws") as websocket:
             websocket.send_text(json.dumps({
-                "action": "load_3d_model",
-                "data": {"query": "H2O Molecule"}
+                "action": "select_3d_model",
+                "data": {"uid": "model_uid_xyz"}
             }))
             response2 = websocket.receive_json()
 
