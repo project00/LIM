@@ -180,6 +180,7 @@
         let reconnectTimeoutId = null;
         let lessonLog = [];
         let lastGeneratedSummary = "";
+        let modelSelectionInFlight = false;
         const sessionStartTime = new Date();
 
         function connectWebSocket() {
@@ -321,6 +322,7 @@
 
         async function renderData(data) {
             if (!data) return;
+            modelSelectionInFlight = false;
 
             if (data.type === "error") {
                 const toast = document.getElementById("toast-banner");
@@ -335,7 +337,45 @@
             const out = document.getElementById("output");
             out.innerHTML = "";
 
-            if (data.type === "summary") {
+            if (data.type === "model_search_results") {
+                const results = data.results || [];
+                if (results.length === 0) {
+                    const toast = document.getElementById("toast-banner");
+                    if (toast) {
+                        toast.innerText = "⚠️ Errore [MODEL_NOT_FOUND]: Nessun modello 3D trovato per la ricerca.";
+                        toast.style.display = "block";
+                        setTimeout(() => { toast.style.display = "none"; }, 5000);
+                    }
+                    out.innerHTML = `<div style="color: #f38ba8; font-weight: bold; text-align: center; margin-top: 50px;">⚠️ Nessun modello 3D trovato per la ricerca.</div>`;
+                    return;
+                }
+
+                let html = `
+                    <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #cdd6f4;">Risultati Ricerca Modelli 3D:</div>
+                    <div class="model-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;">
+                `;
+
+                results.forEach(item => {
+                    const thumbUrl = item.thumbnail_url || "https://sketchfab.com/static/images/placeholders/placeholder-model.png";
+                    html += `
+                        <button class="model-card" onclick="selectModel('${escapeHTML(item.uid)}')" style="display: flex; flex-direction: column; background: #242535; border: 1px solid #45475a; border-radius: 8px; padding: 10px; cursor: pointer; text-align: left; width: 100%; min-height: 180px; box-sizing: border-box; transition: background 0.2s;" data-uid="${escapeHTML(item.uid)}">
+                            <img src="${escapeHTML(thumbUrl)}" alt="${escapeHTML(item.name)}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: #11111b; margin-bottom: 8px; pointer-events: none;" />
+                            <div style="font-weight: bold; font-size: 12px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 4px; pointer-events: none;">${escapeHTML(item.name)}</div>
+                            <div style="font-size: 11px; color: #a6adc8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 6px; pointer-events: none;">Da: ${escapeHTML(item.author)}</div>
+                            <span style="font-size: 9px; font-weight: bold; background: #f9e2af; color: #11111b; padding: 2px 6px; border-radius: 4px; pointer-events: none; align-self: flex-start;">${escapeHTML(item.license)}</span>
+                        </button>
+                    `;
+                });
+
+                html += `
+                    </div>
+                    <style>
+                        .model-card:hover { background: #313244 !important; }
+                        .model-card:focus { border-color: #89b4fa !important; outline: none; }
+                    </style>
+                `;
+                out.innerHTML = html;
+            } else if (data.type === "summary") {
                 const text = data.text || data.summary || "";
                 lastGeneratedSummary = text;
                 const normalizedText = text.replace(/\r\n/g, "\n");
@@ -599,13 +639,37 @@
             }
         }
 
+        function selectModel(uid) {
+            if (modelSelectionInFlight) return;
+            modelSelectionInFlight = true;
+
+            const toast = document.getElementById("toast-banner");
+            if (toast) {
+                toast.innerText = "ℹ️ Caricamento modello...";
+                toast.style.display = "block";
+            }
+
+            document.querySelectorAll(".model-card").forEach(btn => {
+                btn.disabled = true;
+                btn.style.opacity = "0.5";
+                btn.style.cursor = "not-allowed";
+            });
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: "select_3d_model",
+                    data: { uid: uid }
+                }));
+            }
+        }
+
         function submitModel() {
             const inputEl = document.getElementById("input-model");
             const val = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
             if (!val) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
-                    action: "load_3d_model",
+                    action: "search_3d_models",
                     data: { query: val }
                 }));
             }
