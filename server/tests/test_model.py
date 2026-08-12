@@ -2,7 +2,8 @@
 Unit and Integration Tests for Sketchfab 3D Model Service.
 
 Design Note:
-    This module tests the model search, local glTF caching, unzipping, and API routing.
+    This module tests the model search, details retrieval, local glTF caching,
+    unzipping, and E2E API routing for search_3d_models and select_3d_model actions.
     It mocks all external HTTP requests to Sketchfab's endpoints using standard mock decorators.
 """
 
@@ -19,7 +20,11 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.model_service import search_and_fetch_3d_model, CACHE_DIR
+from services.model_service import (
+    search_3d_models,
+    fetch_3d_model_by_uid,
+    CACHE_DIR
+)
 from main import app
 
 
@@ -43,11 +48,11 @@ def create_dummy_zip_bytes() -> bytes:
     return buf.getvalue()
 
 
-@patch("httpx.Client.get")
-def test_search_and_fetch_3d_model_cache_miss_success(mock_get: MagicMock) -> None:
-    """Tests a full cache-miss download pipeline: search model, request download link, download zip, unzip and serve."""
+# ------------------ search_3d_models tests ------------------
 
-    # 1. Setup mock search response (index 0)
+@patch("httpx.Client.get")
+def test_search_3d_models_success(mock_get: MagicMock) -> None:
+    """Tests that search_3d_models performs search, filters to downloadable+CC and returns candidate dictionaries with thumbnails closest to 256px."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
     mock_search_resp.json.return_value = {
@@ -64,235 +69,190 @@ def test_search_and_fetch_3d_model_cache_miss_success(mock_get: MagicMock) -> No
                 "license": {
                     "slug": "by",
                     "fullName": "CC Attribution"
-                }
-            }
-        ]
-    }
-
-    # 2. Setup mock download link response (index 1)
-    mock_download_resp = MagicMock()
-    mock_download_resp.status_code = 200
-    mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip",
-            "size": 1024,
-            "expires": 300
-        }
-    }
-
-    # 3. Setup mock zip archive response (index 2)
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
-
-    # Assign side effects sequentially to mock_get
-    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
-
-    # Run the service with explicit sketchfab_token argument
-    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    # Assert correct metadata returned
-    assert metadata["uid"] == "model_uid_123"
-    assert metadata["title"] == "Water Molecule H2O"
-    assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
-    assert metadata["attribution"]["author"] == "Science Creator"
-    assert metadata["attribution"]["license"] == "CC Attribution"
-    assert metadata["attribution"]["source_url"] == "https://sketchfab.com/models/model_uid_123"
-
-    # Verify folder was extracted and scene.gltf cached
-    cached_gltf = os.path.join(CACHE_DIR, "model_uid_123", "scene.gltf")
-    assert os.path.exists(cached_gltf)
-
-    # Check total HTTP calls: 1. search, 2. download link, 3. archive download
-    assert mock_get.call_count == 3
-
-
-@patch("httpx.Client.get")
-def test_search_and_fetch_3d_model_cache_hit_skips_download(mock_get: MagicMock) -> None:
-    """Tests that on a cache hit, the service skips the download steps entirely and returns metadata from the search."""
-
-    # 1. Pre-populate cache folder manually
-    model_dir = os.path.join(CACHE_DIR, "model_uid_123")
-    os.makedirs(model_dir, exist_ok=True)
-    with open(os.path.join(model_dir, "scene.gltf"), "w") as f:
-        f.write("{'info': 'manually cached gltf'}")
-
-    # 2. Setup mock search response (the only HTTP call needed!)
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "model_uid_123",
-                "name": "Water Molecule H2O",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/model_uid_123",
-                "user": {
-                    "username": "science_creator",
-                    "displayName": "Science Creator"
                 },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
+                "thumbnails": {
+                    "images": [
+                        {"url": "large.jpg", "width": 1024, "height": 576},
+                        {"url": "medium.jpg", "width": 256, "height": 144},
+                        {"url": "small.jpg", "width": 64, "height": 36}
+                    ]
                 }
             }
         ]
     }
     mock_get.return_value = mock_search_resp
 
-    # Run service with explicit sketchfab_token argument
-    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
+    results = search_3d_models("H2O", "test-sketchfab-token")
 
-    # Assert "downloadable" is "true" in the search parameters
+    # Assert correct parameters passed to API search (no downloadable param inside search query per standard)
     _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
+    assert first_call_kwargs.get("params", {}).get("q") == "H2O"
+    assert "downloadable" not in first_call_kwargs.get("params", {})
 
-    # Assert metadata
-    assert metadata["uid"] == "model_uid_123"
-    assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
-
-    # Verify ONLY the search GET was made (no download, no archive GET)
-    assert mock_get.call_count == 1
+    assert len(results) == 1
+    assert results[0]["uid"] == "model_uid_123"
+    assert results[0]["name"] == "Water Molecule H2O"
+    assert results[0]["thumbnail_url"] == "medium.jpg" # Closest to 256px
+    assert results[0]["author"] == "Science Creator"
+    assert results[0]["license"] == "CC Attribution"
 
 
 @patch("httpx.Client.get")
-def test_search_no_results_raises_value_error(mock_get: MagicMock) -> None:
-    """Tests that if search returns empty results, a ValueError (MODEL_NOT_FOUND) is raised."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "results": []
-    }
-    mock_get.return_value = mock_resp
-
-    with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
-        search_and_fetch_3d_model("impossible_search_query_123", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-
-@patch("httpx.Client.get")
-def test_search_api_failure_raises_runtime_error(mock_get: MagicMock) -> None:
-    """Tests that if the search API returns a non-200 failure status, a RuntimeError is raised."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 500
-    mock_resp.text = "Internal Server Error from Sketchfab"
-    mock_get.return_value = mock_resp
-
-    with pytest.raises(RuntimeError, match="Sketchfab Search API failure"):
-        search_and_fetch_3d_model("H2O", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-
-@patch("httpx.Client.get")
-def test_api_401_auth_error_produces_remote_service_error(mock_get: MagicMock) -> None:
-    """Tests that a Sketchfab 401 unauthorized status produces a REMOTE_SERVICE_ERROR, not MODEL_NOT_FOUND."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 401
-    mock_resp.text = "Unauthorized - invalid token"
-    mock_get.return_value = mock_resp
-
-    client = TestClient(app)
-    headers = {
-        "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "invalid-token"
-    }
-    payload = {
-        "action": "load_3d_model",
-        "data": {
-            "query": "H2O"
-        }
-    }
-
-    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
-    assert resp.status_code == 200
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "REMOTE_SERVICE_ERROR"
-    assert "failure (HTTP 401)" in data["message"]
-
-
-@patch("httpx.Client.get")
-def test_api_429_rate_limit_produces_remote_service_error(mock_get: MagicMock) -> None:
-    """Tests that a Sketchfab 429 rate limit status produces a REMOTE_SERVICE_ERROR, not MODEL_NOT_FOUND."""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 429
-    mock_resp.text = "Rate limit exceeded"
-    mock_get.return_value = mock_resp
-
-    client = TestClient(app)
-    headers = {
-        "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "some-token"
-    }
-    payload = {
-        "action": "load_3d_model",
-        "data": {
-            "query": "H2O"
-        }
-    }
-
-    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
-    assert resp.status_code == 200
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "REMOTE_SERVICE_ERROR"
-    assert "failure (HTTP 429)" in data["message"]
-
-
-# ------------------ API End-to-End Routing Tests ------------------
-
-@patch("litellm.completion")
-@patch("httpx.Client.get")
-def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: MagicMock) -> None:
-    """Tests POST /api/v1/analyze for action 'load_3d_model' returns model metadata on success."""
-
-    # Pre-populate cache folder manually to keep test simple (1 search call only)
-    model_dir = os.path.join(CACHE_DIR, "model_uid_abc")
-    os.makedirs(model_dir, exist_ok=True)
-    with open(os.path.join(model_dir, "scene.gltf"), "w") as f:
-        f.write("{'info': 'cached'}")
-
+def test_search_3d_models_relevance_sorting(mock_get: MagicMock) -> None:
+    """Tests relevance-sorting where matching significant word comes first, but non-matching is NOT rejected (reordered lower)."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
     mock_search_resp.json.return_value = {
         "results": [
             {
-                "uid": "model_uid_abc",
-                "name": "Water Molecule H2O",
+                "uid": "villa_uid_999",
+                "name": "Luxury Modern Villa with Pool",
                 "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/model_uid_abc",
-                "user": {
-                    "username": "creator",
-                    "displayName": "Creator display"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
+                "license": {"slug": "by", "fullName": "CC Attribution"},
+                "thumbnails": {"images": [{"url": "villa.jpg", "width": 256}]}
+            },
+            {
+                "uid": "h2o_uid_111",
+                "name": "Water Molecule (H2O)",
+                "isDownloadable": True,
+                "license": {"slug": "by", "fullName": "CC Attribution"},
+                "thumbnails": {"images": [{"url": "h2o.jpg", "width": 256}]}
             }
         ]
     }
-    mock_sketchfab_get.return_value = mock_search_resp
+    mock_get.return_value = mock_search_resp
+
+    results = search_3d_models("H2O", "test-sketchfab-token")
+
+    # We expect 2 results: H2O is relevance-sorted first (matches significant word), then Villa is sorted second.
+    assert len(results) == 2
+    assert results[0]["uid"] == "h2o_uid_111"
+    assert results[1]["uid"] == "villa_uid_999"
+
+
+@patch("httpx.Client.get")
+def test_search_no_results_or_filters_raises_value_error(mock_get: MagicMock) -> None:
+    """Tests that if search returns no results or none pass downloadable+CC filters, ValueError is raised."""
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "results": [
+            {
+                "uid": "non_dl_uid",
+                "name": "Non downloadable model",
+                "isDownloadable": False,
+                "license": {"slug": "by"}
+            },
+            {
+                "uid": "non_cc_uid",
+                "name": "Non CC licensed model",
+                "isDownloadable": True,
+                "license": {"slug": "commercial-standard"} # No CC
+            }
+        ]
+    }
+    mock_get.return_value = mock_search_resp
+
+    with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
+        search_3d_models("query", "test-sketchfab-token")
+
+
+# ------------------ fetch_3d_model_by_uid tests ------------------
+
+@patch("httpx.Client.get")
+def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
+    """Tests download, extraction, and caching logic of fetch_3d_model_by_uid on cache miss."""
+    # 1. Setup mock model details API response
+    mock_detail_resp = MagicMock()
+    mock_detail_resp.status_code = 200
+    mock_detail_resp.json.return_value = {
+        "uid": "model_uid_123",
+        "name": "Water Molecule H2O",
+        "viewerUrl": "https://sketchfab.com/models/model_uid_123",
+        "user": {
+            "username": "science_creator",
+            "displayName": "Science Creator"
+        },
+        "license": {
+            "slug": "by",
+            "fullName": "CC Attribution"
+        }
+    }
+
+    # 2. Setup mock download link response
+    mock_download_resp = MagicMock()
+    mock_download_resp.status_code = 200
+    mock_download_resp.json.return_value = {
+        "gltf": {
+            "url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip"
+        }
+    }
+
+    # 3. Setup mock zip archive response
+    mock_archive_resp = MagicMock()
+    mock_archive_resp.status_code = 200
+    mock_archive_resp.content = create_dummy_zip_bytes()
+
+    mock_get.side_effect = [mock_detail_resp, mock_download_resp, mock_archive_resp]
+
+    metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
+
+    assert metadata["uid"] == "model_uid_123"
+    assert metadata["title"] == "Water Molecule H2O"
+    assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
+    assert metadata["attribution"]["author"] == "Science Creator"
+
+    # Verify extracted cache and metadata.json
+    assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "scene.gltf"))
+    assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "metadata.json"))
+
+
+@patch("httpx.Client.get")
+def test_fetch_3d_model_by_uid_cache_hit_skips_download(mock_get: MagicMock) -> None:
+    """Tests that fetch_3d_model_by_uid reads directly from server-side cache and skips all network requests on cache hit."""
+    model_dir = os.path.join(CACHE_DIR, "model_uid_123")
+    os.makedirs(model_dir, exist_ok=True)
+    with open(os.path.join(model_dir, "scene.gltf"), "w") as f:
+        f.write("{'info': 'manually cached gltf'}")
+
+    cached_metadata = {
+        "uid": "model_uid_123",
+        "title": "Cached Water Molecule",
+        "model_url": "/models/model_uid_123/scene.gltf",
+        "attribution": {
+            "author": "Cached Science Creator",
+            "license": "CC Attribution",
+            "source_url": "https://sketchfab.com/models/model_uid_123"
+        }
+    }
+    with open(os.path.join(model_dir, "metadata.json"), "w") as f:
+        import json
+        json.dump(cached_metadata, f)
+
+    metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
+
+    # Assert returned details are exactly as cached
+    assert metadata["title"] == "Cached Water Molecule"
+    assert metadata["attribution"]["author"] == "Cached Science Creator"
+
+    # Verify no HTTP calls made
+    assert mock_get.call_count == 0
+
+
+# ------------------ End-to-End API Routing Tests ------------------
+
+@patch("main.search_3d_models")
+def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
+    """Tests POST /api/v1/analyze for action 'search_3d_models' returns list of candidates."""
+    mock_search.return_value = [
+        {
+            "uid": "model_1",
+            "name": "Model 1",
+            "thumbnail_url": "thumb1.jpg",
+            "author": "Author 1",
+            "license": "CC-BY"
+        }
+    ]
 
     client = TestClient(app)
     headers = {
@@ -300,7 +260,7 @@ def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: Magi
         "X-Sketchfab-Token": "test-sketchfab-token"
     }
     payload = {
-        "action": "load_3d_model",
+        "action": "search_3d_models",
         "data": {
             "query": "H2O"
         }
@@ -309,24 +269,56 @@ def test_api_load_3d_model_success(mock_sketchfab_get: MagicMock, mock_llm: Magi
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
 
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_sketchfab_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
+    data = resp.json()
+    assert data["type"] == "model_search_results"
+    assert data["source"] == "remote_index"
+    assert len(data["results"]) == 1
+    assert data["results"][0]["uid"] == "model_1"
+
+
+@patch("main.fetch_3d_model_by_uid")
+def test_api_select_3d_model_success(mock_fetch: MagicMock) -> None:
+    """Tests POST /api/v1/analyze for action 'select_3d_model' returns stable glTF model URL."""
+    mock_fetch.return_value = {
+        "uid": "model_uid_abc",
+        "title": "Selected Model",
+        "model_url": "/models/model_uid_abc/scene.gltf",
+        "attribution": {
+            "author": "Creator display",
+            "license": "CC Attribution",
+            "source_url": "https://sketchfab.com/models/model_uid_abc"
+        }
+    }
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "test-sketchfab-token"
+    }
+    payload = {
+        "action": "select_3d_model",
+        "data": {
+            "uid": "model_uid_abc"
+        }
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
 
     data = resp.json()
     assert data["type"] == "model_3d"
     assert data["source"] == "remote_index"
     assert data["model_url"] == "/models/model_uid_abc/scene.gltf"
-    assert data["label"] == "Water Molecule H2O"
+    assert data["label"] == "Selected Model"
     assert data["attribution"]["author"] == "Creator display"
 
 
-def test_api_load_3d_model_missing_credentials() -> None:
-    """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error shape if X-Sketchfab-Token is absent."""
+def test_api_search_3d_models_missing_credentials() -> None:
+    """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error if X-Sketchfab-Token is absent on search."""
     client = TestClient(app)
-    headers = {"Authorization": "Bearer test_secret_token"} # No X-Sketchfab-Token!
+    headers = {"Authorization": "Bearer test_secret_token"}
     payload = {
-        "action": "load_3d_model",
+        "action": "search_3d_models",
         "data": {
             "query": "H2O"
         }
@@ -338,60 +330,17 @@ def test_api_load_3d_model_missing_credentials() -> None:
     data = resp.json()
     assert data["type"] == "error"
     assert data["code"] == "MISSING_CREDENTIALS"
-    assert data["action"] == "load_3d_model"
-    assert "Nessuna credenziale Sketchfab" in data["message"]
+    assert data["action"] == "search_3d_models"
 
 
-@patch("httpx.Client.get")
-def test_api_load_3d_model_not_found(mock_sketchfab_get: MagicMock) -> None:
-    """Tests POST /api/v1/analyze returns MODEL_NOT_FOUND error shape on search miss."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": []
-    }
-    mock_sketchfab_get.return_value = mock_search_resp
-
+def test_api_select_3d_model_missing_credentials() -> None:
+    """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error if X-Sketchfab-Token is absent on select."""
     client = TestClient(app)
-    headers = {
-        "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "test-sketchfab-token"
-    }
+    headers = {"Authorization": "Bearer test_secret_token"}
     payload = {
-        "action": "load_3d_model",
+        "action": "select_3d_model",
         "data": {
-            "query": "non_existent_model"
-        }
-    }
-
-    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
-    assert resp.status_code == 200
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_sketchfab_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    data = resp.json()
-    assert data["type"] == "error"
-    assert data["code"] == "MODEL_NOT_FOUND"
-    assert data["action"] == "load_3d_model"
-    assert "Nessun modello 3D trovato" in data["message"]
-
-
-@patch("httpx.Client.get")
-def test_api_load_3d_model_remote_service_error(mock_sketchfab_get: MagicMock) -> None:
-    """Tests POST /api/v1/analyze returns REMOTE_SERVICE_ERROR error shape on API/download failure."""
-    mock_sketchfab_get.side_effect = httpx.ConnectError("Connection timed out to Sketchfab")
-
-    client = TestClient(app)
-    headers = {
-        "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "test-sketchfab-token"
-    }
-    payload = {
-        "action": "load_3d_model",
-        "data": {
-            "query": "H2O"
+            "uid": "model_uid_123"
         }
     }
 
@@ -400,223 +349,5 @@ def test_api_load_3d_model_remote_service_error(mock_sketchfab_get: MagicMock) -
 
     data = resp.json()
     assert data["type"] == "error"
-    assert data["code"] == "REMOTE_SERVICE_ERROR"
-    assert data["action"] == "load_3d_model"
-    assert "Impossibile connettersi a Sketchfab" in data["message"]
-
-
-@patch("httpx.Client.get")
-def test_search_relevance_h2o_bug_resolved(mock_get: MagicMock) -> None:
-    """Tests that the h2o bug is resolved by selecting the relevant model and filtering out the irrelevant villa."""
-    # 1. Setup mock search response with an irrelevant first match and a relevant second match
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "villa_uid_999",
-                "name": "Luxury Modern Villa with Pool",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
-                "user": {
-                    "username": "architect",
-                    "displayName": "Architect Pro"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
-            },
-            {
-                "uid": "h2o_uid_111",
-                "name": "Water Molecule (H2O)",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/h2o_uid_111",
-                "user": {
-                    "username": "science_lab",
-                    "displayName": "Science Lab"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
-            }
-        ]
-    }
-
-    # 2. Setup mock download link response (for h2o_uid_111)
-    mock_download_resp = MagicMock()
-    mock_download_resp.status_code = 200
-    mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/h2o_gltf.zip",
-            "size": 2048,
-            "expires": 300
-        }
-    }
-
-    # 3. Setup mock zip archive response
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
-
-    # Assign side effects to mock_get
-    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
-
-    # Run the service for query "H2O"
-    metadata = search_and_fetch_3d_model("H2O", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    # Assert that the genuinely relevant H2O model was selected, not the villa
-    assert metadata["uid"] == "h2o_uid_111"
-    assert metadata["title"] == "Water Molecule (H2O)"
-    assert metadata["model_url"] == "/models/h2o_uid_111/scene.gltf"
-
-    # Verify folder was extracted and scene.gltf cached for the correct UID
-    cached_gltf = os.path.join(CACHE_DIR, "h2o_uid_111", "scene.gltf")
-    assert os.path.exists(cached_gltf)
-    assert not os.path.exists(os.path.join(CACHE_DIR, "villa_uid_999"))
-
-
-@patch("httpx.Client.get")
-def test_search_relevance_no_matches_raises_error(mock_get: MagicMock) -> None:
-    """Tests that if no result matches the downloadable filters, we raise a ValueError."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    # No downloadable model
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "villa_uid_999",
-                "name": "Luxury Modern Villa with Pool",
-                "isDownloadable": False,
-                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
-                "user": {
-                    "username": "architect",
-                    "displayName": "Architect Pro"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    with pytest.raises(ValueError, match="Nessun modello 3D trovato per la ricerca"):
-        search_and_fetch_3d_model("H2O", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-
-@patch("httpx.Client.get")
-def test_search_all_stopwords_query_fallback(mock_get: MagicMock) -> None:
-    """Tests that a query composed entirely of stopwords (like "la il") falls back to first downloadable+CC model since Pass 1 finds no matching significant word."""
-    # 1. Setup mock search response with a downloadable/CC model
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "villa_uid_999",
-                "name": "Luxury Modern Villa with Pool",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/villa_uid_999",
-                "user": {
-                    "username": "architect",
-                    "displayName": "Architect Pro"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
-            }
-        ]
-    }
-
-    # 2. Setup mock download link response
-    mock_download_resp = MagicMock()
-    mock_download_resp.status_code = 200
-    mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/villa.zip",
-            "size": 1024,
-            "expires": 300
-        }
-    }
-
-    # 3. Setup mock zip archive response
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
-
-    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
-
-    # "la il" has no significant words. Should use Pass 2 fallback and succeed!
-    metadata = search_and_fetch_3d_model("la il", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    assert metadata["uid"] == "villa_uid_999"
-
-
-@patch("httpx.Client.get")
-def test_search_relevance_dog_fallback(mock_get: MagicMock) -> None:
-    """Tests dog-style queries where name does not contain significant words but falls back to first downloadable/CC."""
-    # 1. Setup mock search response
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "golden_retriever_uid",
-                "name": "Golden Retriever",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/golden_retriever_uid",
-                "user": {
-                    "username": "dog_lover",
-                    "displayName": "Dog Lover"
-                },
-                "license": {
-                    "slug": "by",
-                    "fullName": "CC Attribution"
-                }
-            }
-        ]
-    }
-
-    # 2. Setup mock download link response
-    mock_download_resp = MagicMock()
-    mock_download_resp.status_code = 200
-    mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/dog.zip",
-            "size": 1024,
-            "expires": 300
-        }
-    }
-
-    # 3. Setup mock zip archive response
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
-
-    mock_get.side_effect = [mock_search_resp, mock_download_resp, mock_archive_resp]
-
-    # Query is "dog", candidate is "Golden Retriever". "dog" is not in "golden retriever" so Pass 1 fails, Pass 2 must fallback.
-    metadata = search_and_fetch_3d_model("dog", "test-sketchfab-token")
-
-    # Assert "downloadable" is "true" in the search parameters
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    assert metadata["uid"] == "golden_retriever_uid"
-    assert metadata["title"] == "Golden Retriever"
+    assert data["code"] == "MISSING_CREDENTIALS"
+    assert data["action"] == "select_3d_model"
