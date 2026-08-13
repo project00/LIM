@@ -1330,27 +1330,72 @@
 
             const modal = document.getElementById("license-modal");
             const text = document.getElementById("modal-text");
-            if (!modal || !text) return;
+            const continueBtn = document.getElementById("modal-btn-continue");
+            if (!modal || !text || !continueBtn) return;
 
-            let attributionText = "";
-            if (attributionRequired === "true" || attributionRequired === true) {
-                attributionText = "L'autore deve essere attribuito secondo i termini della licenza. Spiegazione breve: l'utilizzo di questo modello richiede il rispetto delle condizioni di attribuzione citando la fonte e l'autore.";
-            } else {
-                attributionText = "Questa licenza non richiede attribuzione obbligatoria per l'uso scolastico o didattico.";
-            }
+            // Make sure the button has initial defaults
+            continueBtn.innerText = "Continua";
+            continueBtn.onclick = function() { confirmLicenseDownload(); };
 
-            let licLink = "";
-            if (licenseUrl) {
-                licLink = `<br><br>Leggi i termini completi della licenza qui: <a href="${escapeHTML(licenseUrl)}" target="_blank" style="color: #89b4fa; text-decoration: underline;">Termini Licenza 🌐</a>`;
-            }
+            // Check authentication status via daemon proxy
+            fetch("http://127.0.0.1:5000/api/sketchfab/status")
+                .then(res => res.json())
+                .then(statusData => {
+                    if (statusData.authenticated) {
+                        // AUTHENTICATED: Show license confirmation content
+                        let attributionText = "";
+                        if (attributionRequired === "true" || attributionRequired === true) {
+                            attributionText = "L'autore deve essere attribuito secondo i termini della licenza. Spiegazione breve: l'utilizzo di questo modello richiede il rispetto delle condizioni di attribuzione citando la fonte e l'autore.";
+                        } else {
+                            attributionText = "Questa licenza non richiede attribuzione obbligatoria per l'uso scolastico o didattico.";
+                        }
 
-            text.innerHTML = `Stai per avviare il processo di download per il modello 3D <b>${escapeHTML(name)}</b> creato da <i>${escapeHTML(author)}</i>.<br><br>` +
-                             `Questo modello è distribuito con licenza <b>${escapeHTML(license)}</b>.<br><br>` +
-                             `${attributionText}${licLink}`;
+                        let licLink = "";
+                        if (licenseUrl) {
+                            licLink = `<br><br>Leggi i termini completi della licenza qui: <a href="${escapeHTML(licenseUrl)}" target="_blank" style="color: #89b4fa; text-decoration: underline;">Termini Licenza 🌐</a>`;
+                        }
 
-            modal.style.display = "flex";
-            const cancelBtn = modal.querySelector(".modal-btn-cancel");
-            if (cancelBtn) cancelBtn.focus();
+                        text.innerHTML = `Stai per avviare il processo di download per il modello 3D <b>${escapeHTML(name)}</b> creato da <i>${escapeHTML(author)}</i>.<br><br>` +
+                                         `Questo modello è distribuito con licenza <b>${escapeHTML(license)}</b>.<br><br>` +
+                                         `${attributionText}${licLink}`;
+
+                        modal.style.display = "flex";
+                        const cancelBtn = modal.querySelector(".modal-btn-cancel");
+                        if (cancelBtn) cancelBtn.focus();
+                    } else {
+                        // UNAUTHENTICATED: Show login prompt
+                        text.innerHTML = `<span style="color: #f38ba8; font-weight: bold; font-size: 14px;">⚠️ Accesso Richiesto</span><br><br>` +
+                                         `Per scaricare un modello da Sketchfab devi accedere con il tuo account Sketchfab.<br><br>` +
+                                         `Clicca sul pulsante sottostante per effettuare l'accesso sicuro via OAuth2. Una volta completato il login nel tuo browser, potrai chiudere quella scheda e fare di nuovo clic su "Scarica modello" su questo pannello.`;
+
+                        continueBtn.innerText = "Accedi con Sketchfab";
+                        continueBtn.onclick = function() {
+                            fetch("http://127.0.0.1:5000/api/sketchfab/login-url")
+                                .then(r => r.json())
+                                .then(urlData => {
+                                    if (urlData.url) {
+                                        window.open(urlData.url, "_blank");
+                                    } else {
+                                        alert("Errore nel recupero dell'URL di login.");
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error("Errore richiamando login-url:", err);
+                                    alert("Impossibile connettersi al demone locale.");
+                                });
+                        };
+
+                        modal.style.display = "flex";
+                        const cancelBtn = modal.querySelector(".modal-btn-cancel");
+                        if (cancelBtn) cancelBtn.focus();
+                    }
+                })
+                .catch(err => {
+                    console.error("Errore controllo status Sketchfab:", err);
+                    text.innerHTML = `<span style="color: #f38ba8; font-weight: bold;">⚠️ Errore Connessione</span><br><br>` +
+                                     `Impossibile connettersi al demone locale sulla porta 5000 per verificare lo stato di autenticazione.`;
+                    modal.style.display = "flex";
+                });
         };
 
         window.closeLicenseModal = function() {

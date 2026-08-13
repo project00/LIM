@@ -970,7 +970,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "type": "error",
                                 "code": "TTS_NOT_CONFIGURED",
                                 "action": "text_to_speech",
-                                "message": "Nessun modello vocale Piper configurato. Scarica un modello .onnx (es. da rhasspy/piper-voices su Hugging Face) e imposta PIPER_VOICE_MODEL_PATH."
+                                "message": "Nessun modello vocale Piper configurato. Scarica un modello .onnx (es. da rhasspy/piper-voices su Hugging Face) e imposta PIPER_VOICE_MODEL_PATH.",
                             }
                             await websocket.send_text(json.dumps(err_res))
                         else:
@@ -981,10 +981,18 @@ async def websocket_endpoint(websocket: WebSocket):
                                 import subprocess
                                 import piper
 
-                                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+                                with tempfile.NamedTemporaryFile(
+                                    suffix=".wav", delete=False
+                                ) as tmp_wav:
                                     temp_wav_path = tmp_wav.name
 
-                                cmd = ["piper", "--model", voice_model_path, "--output_file", temp_wav_path]
+                                cmd = [
+                                    "piper",
+                                    "--model",
+                                    voice_model_path,
+                                    "--output_file",
+                                    temp_wav_path,
+                                ]
 
                                 def run_piper():
                                     proc = subprocess.Popen(
@@ -993,33 +1001,40 @@ async def websocket_endpoint(websocket: WebSocket):
                                         stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE,
                                         text=True,
-                                        encoding="utf-8"
+                                        encoding="utf-8",
                                     )
                                     proc.communicate(input=text)
                                     return proc.returncode
 
                                 await asyncio.to_thread(run_piper)
 
-                                if os.path.exists(temp_wav_path) and os.path.getsize(temp_wav_path) > 0:
+                                if (
+                                    os.path.exists(temp_wav_path)
+                                    and os.path.getsize(temp_wav_path) > 0
+                                ):
                                     with open(temp_wav_path, "rb") as wav_file:
-                                        audio_b64 = base64.b64encode(wav_file.read()).decode("utf-8")
+                                        audio_b64 = base64.b64encode(
+                                            wav_file.read()
+                                        ).decode("utf-8")
 
                                     response_data = {
                                         "type": "tts_audio",
                                         "source": "local_engine",
                                         "audio_base64": audio_b64,
-                                        "format": "wav"
+                                        "format": "wav",
                                     }
                                     await websocket.send_text(json.dumps(response_data))
                                 else:
-                                    raise RuntimeError("Piper subprocess did not produce a valid WAV file.")
+                                    raise RuntimeError(
+                                        "Piper subprocess did not produce a valid WAV file."
+                                    )
                             except Exception as e:
                                 logger.error(f"Error executing Piper local TTS: {e}")
                                 err_res = {
                                     "type": "error",
                                     "code": "TTS_GENERATION_FAILED",
                                     "action": "text_to_speech",
-                                    "message": f"Errore durante la generazione della sintesi vocale: {str(e)}"
+                                    "message": f"Errore durante la generazione della sintesi vocale: {str(e)}",
                                 }
                                 await websocket.send_text(json.dumps(err_res))
                             finally:
@@ -1079,11 +1094,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         req_headers.update(custom_headers)
 
                         if action == "concept_map":
-                            await websocket.send_text(json.dumps({
-                                "action": "concept_map_status",
-                                "status": "loading",
-                                "message": "Generazione della mappa in corso..."
-                            }))
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "action": "concept_map_status",
+                                        "status": "loading",
+                                        "message": "Generazione della mappa in corso...",
+                                    }
+                                )
+                            )
 
                         try:
                             response = await http_client.post(
@@ -1092,30 +1111,42 @@ async def websocket_endpoint(websocket: WebSocket):
                             response.raise_for_status()
 
                             if action == "concept_map":
-                                await websocket.send_text(json.dumps({
-                                    "action": "concept_map_status",
-                                    "status": "completed",
-                                    "message": "Mappa generata!"
-                                }))
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "action": "concept_map_status",
+                                            "status": "completed",
+                                            "message": "Mappa generata!",
+                                        }
+                                    )
+                                )
 
                             await send_and_backup(websocket, response.text, backup_path)
                         except httpx.TimeoutException as e:
                             logger.error(f"Timeout during remote action {action}: {e}")
                             if action == "concept_map":
-                                await websocket.send_text(json.dumps({
-                                    "action": "concept_map_status",
-                                    "status": "error",
-                                    "message": "Tempo scaduto per la generazione della mappa (timeout)."
-                                }))
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "action": "concept_map_status",
+                                            "status": "error",
+                                            "message": "Tempo scaduto per la generazione della mappa (timeout).",
+                                        }
+                                    )
+                                )
                             raise
                         except Exception as e:
                             logger.error(f"Error during remote action {action}: {e}")
                             if action == "concept_map":
-                                await websocket.send_text(json.dumps({
-                                    "action": "concept_map_status",
-                                    "status": "error",
-                                    "message": f"Errore durante la generazione della mappa: {str(e)}"
-                                }))
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "action": "concept_map_status",
+                                            "status": "error",
+                                            "message": f"Errore durante la generazione della mappa: {str(e)}",
+                                        }
+                                    )
+                                )
                             raise
 
                     except (httpx.ConnectError, httpx.TimeoutException):

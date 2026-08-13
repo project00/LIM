@@ -56,6 +56,7 @@ class DaemonSettings(BaseModel):
         os.getenv("REMOTE_ACTION_TIMEOUT_SECONDS", "30")
     )
     silence_rms_threshold: int = int(os.getenv("SILENCE_RMS_THRESHOLD", "400"))
+    sketchfab_session_id: str = ""
 
 
 def load_settings() -> DaemonSettings:
@@ -95,6 +96,13 @@ def save_settings(s: DaemonSettings) -> None:
 
 # Globally shared setting state in memory, as required by design
 settings = load_settings()
+if not settings.sketchfab_session_id or not settings.sketchfab_session_id.strip():
+    settings.sketchfab_session_id = str(uuid.uuid4())
+    logger.info(
+        "Generated new persistent Sketchfab session ID: %s",
+        settings.sketchfab_session_id,
+    )
+    save_settings(settings)
 
 
 @router.get("/setup", response_class=HTMLResponse)
@@ -309,3 +317,65 @@ async def delete_credential(id: str) -> dict:
     settings.credentials = [c for c in settings.credentials if c.id != id]
     save_settings(settings)
     return {"status": "deleted"}
+
+
+@router.get("/api/sketchfab/login-url")
+async def sketchfab_login_url() -> dict:
+    """
+    Fase 6A: Returns the login URL to redirect the user to Sketchfab OAuth flow.
+    Includes the local daemon's persistent sketchfab_session_id.
+    """
+    login_url = f"{settings.remote_base_url}/api/v1/sketchfab/login?session_id={settings.sketchfab_session_id}"
+    return {"url": login_url}
+
+
+@router.get("/api/sketchfab/status")
+async def proxy_sketchfab_status() -> dict:
+    """
+    Fase 6A: Proxies the Sketchfab authentication status check to the remote server.
+    """
+    url = f"{settings.remote_base_url}/api/v1/sketchfab/status"
+    headers = {
+        "X-Sketchfab-Session-Id": settings.sketchfab_session_id,
+    }
+    if settings.api_key:
+        headers["Authorization"] = f"Bearer {settings.api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "authenticated": False,
+                "message": f"Server status error: {resp.status_code}",
+            }
+    except Exception as e:
+        logger.error("Failed to proxy Sketchfab status request: %s", e)
+        return {"authenticated": False, "message": "Remote server unreachable"}
+
+
+@router.post("/api/sketchfab/logout")
+async def proxy_sketchfab_logout() -> dict:
+    """
+    Fase 6A: Proxies the Sketchfab logout command to the remote server.
+    """
+    url = f"{settings.remote_base_url}/api/v1/sketchfab/logout"
+    headers = {
+        "X-Sketchfab-Session-Id": settings.sketchfab_session_id,
+    }
+    if settings.api_key:
+        headers["Authorization"] = f"Bearer {settings.api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "status": "error",
+                "message": f"Server logout error: {resp.status_code}",
+            }
+    except Exception as e:
+        logger.error("Failed to proxy Sketchfab logout request: %s", e)
+        return {"status": "error", "message": "Remote server unreachable"}

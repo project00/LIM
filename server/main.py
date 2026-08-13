@@ -13,9 +13,11 @@ Design Note:
 import logging
 import os
 import contextvars
+import secrets
+import time
 from typing import Any, Dict
 from fastapi import FastAPI, Depends, Header, HTTPException, status, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 import openai
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -48,6 +50,10 @@ from services.ocr_vision_service import generate_ocr_vision  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 current_request = contextvars.ContextVar("current_request", default=None)
+
+# Threat-safe global in-memory state and session dictionaries for Sketchfab OAuth2 (Fase 6A)
+OAUTH_STATES: Dict[str, dict] = {}
+SESSIONS: Dict[str, dict] = {}
 
 app = FastAPI(
     title="LIM-AI Copilot Mock Remote Server",
@@ -202,6 +208,337 @@ async def health() -> Dict[str, str]:
     """
     logger.info("Health check endpoint queried.")
     return {"status": "ok"}
+
+
+@app.get("/api/v1/sketchfab/login")
+async def sketchfab_login(session_id: str) -> RedirectResponse:
+    """
+    Fase 6A: Sketchfab OAuth2 Login Redirection.
+    Generates a cryptographically secure state parameter, maps it to the
+    session_id, stores it in OAUTH_STATES with a timestamp, and redirects the
+    user to Sketchfab's authorization endpoint.
+    """
+    if not session_id or not session_id.strip():
+        logger.warning("Sketchfab login requested without a valid session_id.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required 'session_id' parameter.",
+        )
+
+    client_id = os.getenv("SKETCHFAB_CLIENT_ID")
+    redirect_uri = os.getenv("SKETCHFAB_REDIRECT_URI")
+
+    if not client_id or not redirect_uri:
+        logger.error("Sketchfab OAuth credentials are not configured on the server.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sketchfab OAuth is not configured on this server.",
+        )
+
+    # Generate a cryptographically secure 256-bit state string
+    state = secrets.token_urlsafe(32)
+    OAUTH_STATES[state] = {"session_id": session_id, "created_at": time.time()}
+
+    logger.info(
+        "Sketchfab OAuth login triggered: session_id=%s generated state=%s",
+        session_id,
+        state,
+    )
+
+    auth_url = (
+        f"https://sketchfab.com/oauth2/authorize/?"
+        f"response_type=code&"
+        f"client_id={client_id}&"
+        f"redirect_uri={redirect_uri}&"
+        f"state={state}"
+    )
+    return RedirectResponse(
+        url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT
+    )
+
+
+@app.get("/api/v1/sketchfab/callback", response_class=HTMLResponse)
+async def sketchfab_callback(code: str = None, state: str = None) -> HTMLResponse:
+    """
+    Fase 6A: Sketchfab OAuth2 Callback Endpoint.
+    1. Validates dynamic state CSRF parameter.
+    2. Securely exchanges authorization code for tokens server-side.
+    3. Retrieves and parses user profile to link to the LIM session.
+    4. Returns a beautifully-styled, dark-themed success confirmation webpage.
+    """
+    import httpx
+    from fastapi.responses import HTMLResponse
+
+    if not code or not state:
+        logger.warning("Callback received with missing code or state parameters.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required OAuth callback parameters (code and state).",
+        )
+
+    # 1. State/CSRF validation
+    if state not in OAUTH_STATES:
+        logger.warning(
+            "OAuth callback rejected: invalid or non-existent state: %s", state
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or unrecognized state parameter.",
+        )
+
+    state_info = OAUTH_STATES.pop(
+        state
+    )  # Pop strictly to prevent reuse (replay attack prevention)
+    session_id = state_info["session_id"]
+    created_at = state_info["created_at"]
+
+    # Check temporal expiration limit (10 minutes = 600s)
+    if time.time() - created_at > 600.0:
+        logger.warning(
+            "OAuth callback rejected: state temporal limit exceeded (expired)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State parameter expired. Please try logging in again.",
+        )
+
+    client_id = os.getenv("SKETCHFAB_CLIENT_ID")
+    client_secret = os.getenv("SKETCHFAB_CLIENT_SECRET")
+    redirect_uri = os.getenv("SKETCHFAB_REDIRECT_URI")
+
+    if not client_id or not client_secret or not redirect_uri:
+        logger.error("Sketchfab OAuth server-side variables are misconfigured.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sketchfab OAuth server settings are incomplete.",
+        )
+
+    # 2. Server-side POST token exchange
+    token_url = "https://sketchfab.com/oauth2/token/"
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+    }
+
+    logger.info(
+        "Exchanging auth code for tokens with Sketchfab (session_id=%s)...", session_id
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                token_url,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            if resp.status_code != 200:
+                logger.error(
+                    "Sketchfab token exchange failed with HTTP %d: %s",
+                    resp.status_code,
+                    resp.text,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Token exchange failed: Sketchfab API returned status {resp.status_code}.",
+                )
+
+            token_data = resp.json()
+    except httpx.HTTPError as e:
+        logger.error("Network error during Sketchfab token exchange: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Network error during token exchange: {str(e)}",
+        )
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in") or 2592000  # Default to 30 days
+
+    if not access_token:
+        logger.error("Access token missing in Sketchfab response.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to retrieve a valid access token.",
+        )
+
+    # 3. Retrieve user profile info from /v3/me
+    profile_url = "https://api.sketchfab.com/v3/me"
+    logger.info("Fetching Sketchfab user profile details...")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            p_resp = await client.get(
+                profile_url, headers={"Authorization": f"Bearer {access_token}"}
+            )
+
+            if p_resp.status_code != 200:
+                logger.error(
+                    "Failed to fetch Sketchfab profile: HTTP %d: %s",
+                    p_resp.status_code,
+                    p_resp.text,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to retrieve user profile from Sketchfab.",
+                )
+
+            profile_data = p_resp.json()
+    except httpx.HTTPError as e:
+        logger.error("Network error during profile retrieval: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Network error during profile retrieval: {str(e)}",
+        )
+
+    username = profile_data.get("username") or "sketchfab_user"
+    display_name = profile_data.get("displayName") or username
+
+    # Save session details securely server-side
+    SESSIONS[session_id] = {
+        "username": username,
+        "displayName": display_name,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": time.time() + expires_in,
+    }
+
+    logger.info(
+        "Successfully established authenticated session for user '%s' (%s)",
+        username,
+        session_id,
+    )
+
+    # 4. Return clean, beautifully-styled, dark-themed success confirmation page
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Collegamento Sketchfab Completato</title>
+        <style>
+            body {{
+                background-color: #1e1e2e;
+                color: #cdd6f4;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                text-align: center;
+            }}
+            .container {{
+                background: #242535;
+                padding: 40px;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+                border: 1px solid #45475a;
+                max-width: 500px;
+                width: 90%;
+            }}
+            h1 {{
+                color: #a6e3a1;
+                font-size: 24px;
+                margin-top: 0;
+            }}
+            p {{
+                font-size: 15px;
+                line-height: 1.6;
+                color: #bac2de;
+            }}
+            .user-info {{
+                background-color: #11111b;
+                padding: 10px;
+                border-radius: 6px;
+                margin: 20px 0;
+                font-weight: bold;
+                color: #f9e2af;
+                border: 1px solid #313244;
+            }}
+            button {{
+                background-color: #a6e3a1;
+                color: #11111b;
+                border: none;
+                padding: 12px 24px;
+                font-size: 14px;
+                font-weight: bold;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: background 0.2s, transform 0.1s;
+            }}
+            button:hover {{
+                background-color: #94e2d5;
+                transform: scale(1.02);
+            }}
+            button:active {{
+                transform: scale(0.98);
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✓ Autenticazione Completata!</h1>
+            <p>Il tuo account Sketchfab è stato collegato con successo alla LIM Copilot.</p>
+            <div class="user-info">
+                Benvenuto, {display_name} (@{username})
+            </div>
+            <p>Puoi ora chiudere in sicurezza questa finestra e tornare alla lavagna per completare il download del modello 3D.</p>
+            <button onclick="window.close()" style="margin-top: 15px;">Chiudi Finestra</button>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=status.HTTP_200_OK)
+
+
+@app.get("/api/v1/sketchfab/status")
+async def sketchfab_status(request: Request) -> Dict[str, Any]:
+    """
+    Fase 6A: Sketchfab Authentication Status Endpoint.
+    Checks if a server-side session is established for the given session_id passed
+    via 'X-Sketchfab-Session-Id' header. Does not expose access_tokens or credentials.
+    """
+    session_id = request.headers.get("X-Sketchfab-Session-Id") or request.headers.get(
+        "x-sketchfab-session-id"
+    )
+    if not session_id:
+        return {"authenticated": False, "message": "Missing session ID."}
+
+    session = SESSIONS.get(session_id)
+    if not session:
+        return {"authenticated": False}
+
+    # Verify if token has expired
+    if time.time() > session.get("expires_at", 0):
+        # Session expired, clean up server-side
+        SESSIONS.pop(session_id, None)
+        return {"authenticated": False, "message": "Session expired."}
+
+    return {
+        "authenticated": True,
+        "username": session.get("username"),
+        "displayName": session.get("displayName"),
+    }
+
+
+@app.post("/api/v1/sketchfab/logout")
+async def sketchfab_logout(request: Request) -> Dict[str, Any]:
+    """
+    Fase 6A: Sketchfab Logout Endpoint.
+    Clears the server-side OAuth session for the specified session_id.
+    """
+    session_id = request.headers.get("X-Sketchfab-Session-Id") or request.headers.get(
+        "x-sketchfab-session-id"
+    )
+    if session_id and session_id in SESSIONS:
+        SESSIONS.pop(session_id, None)
+        logger.info(
+            "Successfully logged out session_id=%s from Sketchfab OAuth.", session_id
+        )
+    return {"status": "logged_out"}
 
 
 @app.post("/api/v1/analyze")
@@ -433,7 +770,9 @@ async def analyze(
             translated_text = None
             if target_language:
                 # Retrieve custom confidence threshold from environment variables (default 0.5)
-                conf_threshold_str = os.getenv("STT_LANGUAGE_CONFIDENCE_THRESHOLD", "0.5")
+                conf_threshold_str = os.getenv(
+                    "STT_LANGUAGE_CONFIDENCE_THRESHOLD", "0.5"
+                )
                 try:
                     conf_threshold = float(conf_threshold_str)
                 except ValueError:
