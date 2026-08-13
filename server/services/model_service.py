@@ -23,6 +23,10 @@ logger = logging.getLogger("server_model_service")
 # Set up local cache path relative to this service or the server root
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "model_cache"))
 
+# Configuration Constants
+MAX_SEARCH_PAGES = 3
+MAX_RESULTS = 8
+
 # Centralized License Registry for supported Creative Commons licenses
 CC_LICENSE_REGISTRY = {
     "322a749bcfa841b29dff1e8a1bb74b0b": {
@@ -228,17 +232,51 @@ def get_thumbnail_url(thumbnails_dict: dict) -> str | None:
     return None
 
 
+def score_relevance(name: str, query: str) -> float:
+    """
+    Computes a deterministic search relevance score based on:
+    1. Exact name match (100.0)
+    2. Name starts with query (50.0)
+    3. Query in name (30.0)
+    4. Token overlap (10.0 per overlapping token)
+    """
+    name_clean = name.strip().lower()
+    query_clean = query.strip().lower()
+
+    if not name_clean or not query_clean:
+        return 0.0
+
+    if name_clean == query_clean:
+        return 100.0
+
+    score = 0.0
+    if name_clean.startswith(query_clean):
+        score += 50.0
+    elif query_clean in name_clean:
+        score += 30.0
+
+    # Token overlap match
+    # Clean up common separators to split into clean tokens
+    separators = ["'", '"', "-", "_", "/", ",", ".", "(", ")"]
+    name_temp = name_clean
+    query_temp = query_clean
+    for sep in separators:
+        name_temp = name_temp.replace(sep, " ")
+        query_temp = query_temp.replace(sep, " ")
+
+    name_tokens = set(name_temp.split())
+    query_tokens = set(query_temp.split())
+
+    overlap = name_tokens.intersection(query_tokens)
+    score += len(overlap) * 10.0
+
+    return score
+
+
 def search_3d_models(query: str, sketchfab_token: str) -> list[dict]:
     """
     Searches Sketchfab for candidates, filters for downloadable + CC models, and returns
-    up to 8 candidates sorted by query match.
-
-    Args:
-        query: The search keyword (e.g. "molecola acqua H2O").
-        sketchfab_token: The Sketchfab V3 API token to use.
-
-    Returns:
-        A list of up to 8 dicts containing candidates conforming to API contract.
+    up to 8 candidates sorted by deterministic relevance match.
     """
     logger.info("Searching Sketchfab for 3D model candidates: '%s'", query)
 
@@ -254,101 +292,112 @@ def search_3d_models(query: str, sketchfab_token: str) -> list[dict]:
     }
 
     auth_headers = get_auth_headers(sketchfab_token)
-    auth_header_val = auth_headers.get("Authorization", "")
-    auth_present = "PRESENT" if auth_header_val.strip() else "EMPTY"
 
-    logger.info(
-        "Sending search query to Sketchfab. URL: '%s', query params: %s. Authorization header: %s",
-        search_url,
-        params,
-        auth_present
-    )
+    eligible_pool = []
+    seen_uids = set()
+    pages_fetched = 0
+    next_url = search_url
 
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(search_url, params=params, headers=auth_headers)
+    # Bounded pagination loop
+    while next_url and pages_fetched < MAX_SEARCH_PAGES:
+        # Check if we already have enough results (>= MAX_RESULTS) to stop fetching early
+        if len(eligible_pool) >= MAX_RESULTS:
+            break
 
-            logger.info("Received response from Sketchfab Search API. Status code: %d", response.status_code)
+        pages_fetched += 1
+        logger.info("Fetching Sketchfab search page %d", pages_fetched)
 
-            if response.status_code != 200:
-                logger.error(
-                    "Sketchfab search failed distinctly with non-200 status code: %d. Error details: %s",
-                    response.status_code,
-                    response.text
-                )
-                raise RuntimeError(f"Sketchfab Search API failure (HTTP {response.status_code}): {response.text}")
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                if next_url == search_url:
+                    response = client.get(search_url, params=params, headers=auth_headers)
+                else:
+                    response = client.get(next_url, headers=auth_headers)
 
-            search_data = response.json()
-    except httpx.HTTPError as e:
-        logger.error("Network error during Sketchfab search: %s", e)
-        raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
+                if response.status_code != 200:
+                    logger.error("Sketchfab search failed on page %d (HTTP %d)", pages_fetched, response.status_code)
+                    if pages_fetched == 1:
+                        raise RuntimeError(f"Sketchfab Search API failure (HTTP {response.status_code}): {response.text}")
+                    else:
+                        break
 
-    raw_results = search_data.get("results", [])
-    logger.info("Sketchfab search returned %d raw candidate results.", len(raw_results))
+                search_data = response.json()
+        except httpx.HTTPError as e:
+            logger.error("Network error during Sketchfab search page %d: %s", pages_fetched, e)
+            if pages_fetched == 1:
+                raise RuntimeError(f"Impossibile connettersi a Sketchfab due to network error: {e}")
+            else:
+                break
 
-    if not raw_results:
-        logger.warning("No Sketchfab search results for query: '%s'", query)
-        raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
-
-    # Filter for downloadable + CC candidates
-    downloadable_cc_candidates = []
-    for idx, model in enumerate(raw_results):
-        m_name = model.get("name", "Modello Sconosciuto")
-        m_uid = model.get("uid", "no-uid")
-
-        is_dl = model.get("isDownloadable")
-        is_downloadable = bool(is_dl)
-
-        license_info = model.get("license")
-        resolved = resolve_license(license_info)
+        raw_results = search_data.get("results", [])
 
         logger.info(
-            "Sketchfab candidate:\n"
-            "name='%s'\n"
-            "uid='%s'\n"
-            "is_downloadable=%s\n"
-            "license=%s\n"
-            "license_recognized=%s",
-            m_name,
-            m_uid,
-            is_downloadable,
-            resolved["license"] if resolved["recognized"] else (license_info.get("label") if license_info else "Unknown"),
-            resolved["recognized"]
+            "Sketchfab search: query=%s page=%d raw=%d eligible=%d",
+            query,
+            pages_fetched,
+            len(raw_results),
+            len(raw_results)
         )
 
-        if not is_downloadable:
-            logger.info("Candidate '%s' (UID: %s) rejected: reason=not_downloadable", m_name, m_uid)
-            continue
+        for model in raw_results:
+            uid = model.get("uid")
+            if not uid or uid in seen_uids:
+                continue
 
-        if not resolved["recognized"]:
-            logger.info("Candidate '%s' (UID: %s) rejected: reason=unrecognized_license", m_name, m_uid)
-            continue
+            # Check downloadable
+            is_dl = model.get("isDownloadable")
+            is_downloadable = bool(is_dl)
+            if is_dl is False:
+                logger.info("Candidate '%s' (UID: %s) rejected: reason=not_downloadable", model.get("name"), uid)
+                continue
 
-        model["_resolved_license"] = resolved
-        downloadable_cc_candidates.append(model)
+            # Check license
+            license_info = model.get("license")
+            resolved = resolve_license(license_info)
+            if not resolved["recognized"]:
+                logger.info("Candidate '%s' (UID: %s) rejected: reason=unrecognized_license", model.get("name"), uid)
+                continue
 
-    if not downloadable_cc_candidates:
+            m_name = model.get("name", "Modello Sconosciuto")
+            logger.info(
+                "Sketchfab candidate: name=%s uid=%s downloadable=%s license=%s license_recognized=True",
+                m_name,
+                uid,
+                is_downloadable,
+                resolved["license"]
+            )
+
+            seen_uids.add(uid)
+            model["_resolved_license"] = resolved
+            eligible_pool.append(model)
+
+        next_url = search_data.get("next")
+
+    logger.info(
+        "Sketchfab search completed: query=%s pages_fetched=%d raw_results=%d eligible_results=%d returned_results=%d",
+        query,
+        pages_fetched,
+        pages_fetched * 24,
+        len(eligible_pool),
+        min(len(eligible_pool), MAX_RESULTS)
+    )
+
+    if not eligible_pool:
         logger.warning("No Sketchfab search results passed the downloadable+CC filters for query: '%s'", query)
         raise ValueError(f"Nessun modello 3D trovato per la ricerca: '{query}'")
 
-    # Sort preference: matching significant query words first, then the rest
-    significant_words = extract_significant_words(query)
-    logger.info("Significant words for query '%s': %s", query, significant_words)
+    # Score each candidate for deterministic ranking
+    for model in eligible_pool:
+        m_name = model.get("name", "")
+        model["_relevance_score"] = score_relevance(m_name, query)
 
-    matching = []
-    non_matching = []
-    for model in downloadable_cc_candidates:
-        m_name_lower = model.get("name", "Modello Sconosciuto").lower()
-        if any(word in m_name_lower for word in significant_words):
-            matching.append(model)
-        else:
-            non_matching.append(model)
+    # Sort descending by score. Since Python's sorting is stable, candidates with the same
+    # relevance score will naturally maintain their original position of appearance.
+    sorted_pool = sorted(eligible_pool, key=lambda x: x["_relevance_score"], reverse=True)
 
-    sorted_candidates = matching + non_matching
     results = []
-
     # Map to the API-contract candidate structure
-    for model in sorted_candidates[:8]:
+    for model in sorted_pool[:MAX_RESULTS]:
         uid = model.get("uid")
         name = model.get("name", "Modello 3D")
         author_info = model.get("user", {})
@@ -366,7 +415,8 @@ def search_3d_models(query: str, sketchfab_token: str) -> list[dict]:
             "license": license_name,
             "is_downloadable": True,
             "model_url": model.get("viewerUrl") or f"https://sketchfab.com/models/{uid}",
-            "license_info": resolved
+            "license_info": resolved,
+            "search_relevance": model.get("_relevance_score", 0.0)
         })
 
     logger.info("Returned %d filtered and sorted candidates.", len(results))

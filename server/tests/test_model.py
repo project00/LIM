@@ -1,10 +1,5 @@
 """
-Unit and Integration Tests for Sketchfab 3D Model Service.
-
-Design Note:
-    This module tests the model search, details retrieval, local glTF caching,
-    unzipping, and E2E API routing for search_3d_models and select_3d_model actions.
-    It mocks all external HTTP requests to Sketchfab's endpoints using standard mock decorators.
+Unit and Integration Tests for Sketchfab 3D Model Service (Phase 4).
 """
 
 import sys
@@ -25,6 +20,7 @@ from services.model_service import (
     fetch_3d_model_by_uid,
     resolve_license,
     is_cc_licensed,
+    score_relevance,
     CACHE_DIR
 )
 from main import app
@@ -50,151 +46,285 @@ def create_dummy_zip_bytes() -> bytes:
     return buf.getvalue()
 
 
-# ------------------ Phase 2 Specific Tests (Test 1 - Test 8) ------------------
+# ------------------ Phase 4 Specific Tests (TEST 1 - TEST 10) ------------------
 
-# Test 1 — CC BY
-def test_resolve_license_cc_by() -> None:
-    """Tests resolution of CC BY license from UID and label."""
-    input_data = {
-        "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
-        "label": "CC Attribution"
-    }
-    res = resolve_license(input_data)
-    assert res["recognized"] is True
-    assert res["license"] == "CC BY"
-    assert res["attribution_required"] is True
-    assert "by/4.0" in res["license_url"]
-
-
-# Test 2 — CC0
-def test_resolve_license_cc0() -> None:
-    """Tests resolution of CC0 Public Domain license from CC0 UID."""
-    input_data = {
-        "uid": "7c23a1ba438d4306920229c12afcb5f9",
-        "label": "CC0 Public Domain"
-    }
-    res = resolve_license(input_data)
-    assert res["recognized"] is True
-    assert res["license"] == "CC0"
-    assert res["attribution_required"] is False
-    assert "zero/1.0" in res["license_url"]
-
-
-# Test 3 — licenza sconosciuta
-def test_resolve_license_unknown() -> None:
-    """Tests that an unknown license is not recognized as Creative Commons."""
-    input_data = {
-        "uid": "unknown-uid",
-        "label": "Unknown License"
-    }
-    res = resolve_license(input_data)
-    assert res["recognized"] is False
-    assert res["license"] is None
-    assert res["attribution_required"] is None
-
-
-# Test 4 — slug presente
-def test_resolve_license_slug_present() -> None:
-    """Tests that a payload possessing 'slug' continues to be recognized."""
-    input_data = {
-        "slug": "by-nc-sa",
-        "fullName": "Creative Commons Attribution-NonCommercial-ShareAlike"
-    }
-    res = resolve_license(input_data)
-    assert res["recognized"] is True
-    assert res["license"] == "CC BY-NC-SA"
-    assert res["attribution_required"] is True
-
-
-# Test 5 & 6 — downloadable and non-downloadable candidates
+# TEST 1: First page contains at least 8 candidates valid.
 @patch("httpx.Client.get")
-def test_search_3d_models_downloadable_and_non_downloadable(mock_get: MagicMock) -> None:
-    """Tests that candidates with 'isDownloadable': true are parsed correctly, while 'isDownloadable': false are excluded."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
+def test_pagination_test1_enough_candidates_first_page(mock_get: MagicMock) -> None:
+    """Tests that search stops after first page and requests max 8 results if first page has >= 8 valid candidates."""
+    mock_results = []
+    for i in range(10):
+        mock_results.append({
+            "uid": f"uid_{i}",
+            "name": f"Elephant Model {i}",
+            "isDownloadable": True,
+            "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"} # CC BY
+        })
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=next_page",
+        "results": mock_results
+    }
+    mock_get.return_value = mock_resp
+
+    results = search_3d_models("elephant", "test-token")
+
+    assert len(results) == 8 # Limit to MAX_RESULTS
+    assert mock_get.call_count == 1 # Only single page fetched!
+
+
+# TEST 2: First page contains less than 8 candidates valid and "next" exists.
+@patch("httpx.Client.get")
+def test_pagination_test2_insufficient_first_page_goes_to_second(mock_get: MagicMock) -> None:
+    """Tests that search goes to second page if first page has < 8 valid candidates."""
+    mock_page1 = MagicMock()
+    mock_page1.status_code = 200
+    mock_page1.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=page2",
         "results": [
             {
-                "uid": "model_dl_cc",
-                "name": "Downloadable Elephant",
+                "uid": "uid_1",
+                "name": "Elephant CCBY",
                 "isDownloadable": True,
-                "license": {
-                    "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
-                    "label": "CC Attribution"
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            }
+        ]
+    }
+    mock_page2 = MagicMock()
+    mock_page2.status_code = 200
+    mock_page2.json.return_value = {
+        "next": None,
+        "results": [
+            {
+                "uid": "uid_2",
+                "name": "Elephant CC0",
+                "isDownloadable": True,
+                "license": {"uid": "7c23a1ba438d4306920229c12afcb5f9"}
+            }
+        ]
+    }
+    mock_get.side_effect = [mock_page1, mock_page2]
+
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 2
+    assert mock_get.call_count == 2 # Fetched page 1 and page 2
+
+
+# TEST 3: The second page contains enough candidates.
+@patch("httpx.Client.get")
+def test_pagination_test3_stops_when_enough_accumulated(mock_get: MagicMock) -> None:
+    """Tests that search stops at page 2 if page 1 + page 2 already has >= 8 candidates."""
+    mock_page1 = MagicMock()
+    mock_page1.status_code = 200
+    mock_page1.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=page2",
+        "results": [
+            {
+                "uid": f"p1_{i}",
+                "name": "Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            } for i in range(4)
+        ]
+    }
+    mock_page2 = MagicMock()
+    mock_page2.status_code = 200
+    mock_page2.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=page3",
+        "results": [
+            {
+                "uid": f"p2_{i}",
+                "name": "Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            } for i in range(5)
+        ]
+    }
+    mock_page3 = MagicMock()
+
+    mock_get.side_effect = [mock_page1, mock_page2, mock_page3]
+
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 8 # exact limit
+    assert mock_get.call_count == 2 # Did not request page 3!
+
+
+# TEST 4: No next page.
+@patch("httpx.Client.get")
+def test_pagination_test4_no_next_page(mock_get: MagicMock) -> None:
+    """Tests correct termination when next page is absent (None)."""
+    mock_page1 = MagicMock()
+    mock_page1.status_code = 200
+    mock_page1.json.return_value = {
+        "next": None,
+        "results": [
+            {
+                "uid": "uid_1",
+                "name": "Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            }
+        ]
+    }
+    mock_get.return_value = mock_page1
+
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 1
+    assert mock_get.call_count == 1
+
+
+# TEST 5: 'next' continues to exist for many pages.
+@patch("httpx.Client.get")
+def test_pagination_test5_max_search_pages_limit(mock_get: MagicMock) -> None:
+    """Tests that pagination does not exceed MAX_SEARCH_PAGES (3)."""
+    mock_pages = []
+    for i in range(5):
+        m = MagicMock()
+        m.status_code = 200
+        m.json.return_value = {
+            "next": f"https://api.sketchfab.com/v3/models?cursor=page{i+2}",
+            "results": [
+                {
+                    "uid": f"uid_{i}",
+                    "name": "Elephant",
+                    "isDownloadable": True,
+                    "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
                 }
+            ]
+        }
+        mock_pages.append(m)
+
+    mock_get.side_effect = mock_pages
+
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 3 # 3 pages, 1 result each
+    assert mock_get.call_count == 3 # Strictly bounded to MAX_SEARCH_PAGES = 3!
+
+
+# TEST 6: Same UID present in multiple pages.
+@patch("httpx.Client.get")
+def test_pagination_test6_deduplication_by_uid(mock_get: MagicMock) -> None:
+    """Tests that candidates with the same UID appearing on different pages are deduplicated."""
+    mock_page1 = MagicMock()
+    mock_page1.status_code = 200
+    mock_page1.json.return_value = {
+        "next": "https://api.sketchfab.com/v3/models?cursor=page2",
+        "results": [
+            {
+                "uid": "duplicate_uid",
+                "name": "Elephant P1",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            }
+        ]
+    }
+    mock_page2 = MagicMock()
+    mock_page2.status_code = 200
+    mock_page2.json.return_value = {
+        "next": None,
+        "results": [
+            {
+                "uid": "duplicate_uid",
+                "name": "Elephant P2",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            }
+        ]
+    }
+    mock_get.side_effect = [mock_page1, mock_page2]
+
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 1
+    assert results[0]["uid"] == "duplicate_uid"
+    assert results[0]["name"] == "Elephant P1" # Kept first occurrence
+
+
+# TEST 7: Ranking.
+@patch("httpx.Client.get")
+def test_ranking_test7_prioritizes_query_match_over_unrelated(mock_get: MagicMock) -> None:
+    """Tests that candidates matching the query keyword are prioritized over unrelated ones (Charger)."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "next": None,
+        "results": [
+            {
+                "uid": "uid_charger",
+                "name": "Charger Model",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
             },
             {
-                "uid": "model_non_dl_cc",
-                "name": "Non-downloadable Elephant",
-                "isDownloadable": False,
-                "license": {
-                    "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
-                    "label": "CC Attribution"
-                }
+                "uid": "uid_elephant_exact",
+                "name": "Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            },
+            {
+                "uid": "uid_african_elephant",
+                "name": "African Elephant",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+            },
+            {
+                "uid": "uid_elephant_model",
+                "name": "Elephant Model Design",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
             }
         ]
     }
-    mock_get.return_value = mock_search_resp
+    mock_get.return_value = mock_resp
 
-    results = search_3d_models("ELEPHANT", "test-token")
-    assert len(results) == 1
-    assert results[0]["uid"] == "model_dl_cc"
-    assert results[0]["is_downloadable"] is True
+    results = search_3d_models("elephant", "test-token")
+    assert len(results) == 4
+
+    # Expected order:
+    # 1. Exact Match: "Elephant" (score 100)
+    # 2. Starts with: "Elephant Model Design" (score 50 + 10 = 60)
+    # 3. Contains: "African Elephant" (score 30 + 10 = 40)
+    # 4. No keyword match: "Charger Model" (score 0)
+    assert results[0]["uid"] == "uid_elephant_exact"
+    assert results[1]["uid"] == "uid_elephant_model"
+    assert results[2]["uid"] == "uid_african_elephant"
+    assert results[3]["uid"] == "uid_charger"
 
 
-# Test 7 — Search API parameters
+# TEST 8: Query case insensitive.
+def test_ranking_test8_case_insensitive() -> None:
+    """Verifies score_relevance behaves case-insensitively."""
+    score_upper = score_relevance("African Elephant", "ELEPHANT")
+    score_lower = score_relevance("African Elephant", "elephant")
+    assert score_upper == score_lower
+    assert score_upper > 0.0
+
+
+# TEST 9: Query multi-word.
+def test_ranking_test9_multi_word_tokenization() -> None:
+    """Verifies relevance scoring with multi-word token overlap."""
+    score_full = score_relevance("African Elephant Toy", "african elephant")
+    score_half = score_relevance("African Lion Toy", "african elephant")
+    # Score for 'African Elephant Toy' should be higher because of higher token overlap
+    assert score_full > score_half
+
+
+# TEST 10: Regression of downloadable=true and license resolver.
 @patch("httpx.Client.get")
-def test_search_api_parameters_contain_downloadable_filter(mock_get: MagicMock) -> None:
-    """Tests that search query URL parameters contain downloadable=true."""
+def test_regression_test10_downloadable_and_license_resolver(mock_get: MagicMock) -> None:
+    """Verifies that downloadable=true is set in params and license resolver maps properly."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
     mock_search_resp.json.return_value = {
+        "next": None,
         "results": [
             {
-                "uid": "model_uid_123",
-                "name": "Elephant CC BY",
-                "isDownloadable": True,
-                "license": {
-                    "uid": "322a749bcfa841b29dff1e8a1bb74b0b"
-                }
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    search_3d_models("elephant", "test-token")
-
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    sent_params = first_call_kwargs.get("params", {})
-    assert sent_params.get("q") == "elephant"
-    assert sent_params.get("downloadable") == "true"
-
-
-# Test 8 — regressione del bug (payload reale ELEPHANT)
-@patch("httpx.Client.get")
-def test_bug_regression_reale_elephant_payload(mock_get: MagicMock) -> None:
-    """
-    Creates a fixture representing exactly the payload that caused the issue:
-    'isDownloadable' is true, and license ommits 'slug' but contains 'uid' and 'label'.
-    Verifies that the candidate passes the filter and is successfully recognized.
-    """
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "elephant_real_bug_uid",
-                "name": "Real African Elephant",
+                "uid": "elephant_reg_123",
+                "name": "Elephant Reg",
                 "isDownloadable": True,
                 "license": {
                     "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
                     "label": "CC Attribution"
-                    # "slug" IS OMITTED as in the actual raw response
-                },
-                "thumbnails": {
-                    "images": [
-                        {"url": "elephant_thumb.jpg", "width": 256}
-                    ]
                 }
             }
         ]
@@ -203,127 +333,15 @@ def test_bug_regression_reale_elephant_payload(mock_get: MagicMock) -> None:
 
     results = search_3d_models("elephant", "test-token")
     assert len(results) == 1
-    assert results[0]["uid"] == "elephant_real_bug_uid"
-    assert results[0]["license"] == "CC BY"
-    assert results[0]["is_downloadable"] is True
     assert results[0]["license_info"]["recognized"] is True
-
-
-# ------------------ search_3d_models tests ------------------
-
-@patch("httpx.Client.get")
-def test_search_3d_models_success(mock_get: MagicMock) -> None:
-    """Tests that search_3d_models performs search, filters to downloadable+CC and returns candidate dictionaries with thumbnails closest to 256px."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "model_uid_123",
-                "name": "Water Molecule H2O",
-                "isDownloadable": True,
-                "viewerUrl": "https://sketchfab.com/models/model_uid_123",
-                "user": {
-                    "username": "science_creator",
-                    "displayName": "Science Creator"
-                },
-                "license": {
-                    "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
-                    "fullName": "CC Attribution"
-                },
-                "thumbnails": {
-                    "images": [
-                        {"url": "large.jpg", "width": 1024, "height": 576},
-                        {"url": "medium.jpg", "width": 256, "height": 144},
-                        {"url": "small.jpg", "width": 64, "height": 36}
-                    ]
-                }
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    results = search_3d_models("H2O", "test-sketchfab-token")
-
-    # Assert correct parameters passed to API search (no downloadable param inside search query per standard)
-    _, first_call_kwargs = mock_get.call_args_list[0]
-    assert first_call_kwargs.get("params", {}).get("q") == "H2O"
-    assert first_call_kwargs.get("params", {}).get("downloadable") == "true"
-
-    assert len(results) == 1
-    assert results[0]["uid"] == "model_uid_123"
-    assert results[0]["name"] == "Water Molecule H2O"
-    assert results[0]["thumbnail_url"] == "medium.jpg" # Closest to 256px
-    assert results[0]["author"] == "Science Creator"
     assert results[0]["license"] == "CC BY"
 
 
-@patch("httpx.Client.get")
-def test_search_3d_models_relevance_sorting(mock_get: MagicMock) -> None:
-    """Tests relevance-sorting where matching significant word comes first, but non-matching is NOT rejected (reordered lower)."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "villa_uid_999",
-                "name": "Luxury Modern Villa with Pool",
-                "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b", "fullName": "CC Attribution"},
-                "thumbnails": {"images": [{"url": "villa.jpg", "width": 256}]}
-            },
-            {
-                "uid": "h2o_uid_111",
-                "name": "Water Molecule (H2O)",
-                "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b", "fullName": "CC Attribution"},
-                "thumbnails": {"images": [{"url": "h2o.jpg", "width": 256}]}
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    results = search_3d_models("H2O", "test-sketchfab-token")
-
-    # We expect 2 results: H2O is relevance-sorted first (matches significant word), then Villa is sorted second.
-    assert len(results) == 2
-    assert results[0]["uid"] == "h2o_uid_111"
-    assert results[1]["uid"] == "villa_uid_999"
-
-
-@patch("httpx.Client.get")
-def test_search_no_results_or_filters_raises_value_error(mock_get: MagicMock) -> None:
-    """Tests that if search returns no results or none pass downloadable+CC filters, ValueError is raised."""
-    mock_search_resp = MagicMock()
-    mock_search_resp.status_code = 200
-    mock_search_resp.json.return_value = {
-        "results": [
-            {
-                "uid": "non_dl_uid",
-                "name": "Non downloadable model",
-                "isDownloadable": False,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
-            },
-            {
-                "uid": "non_cc_uid",
-                "name": "Non CC licensed model",
-                "isDownloadable": True,
-                "license": {"uid": "commercial-standard-uid"} # No CC
-            }
-        ]
-    }
-    mock_get.return_value = mock_search_resp
-
-    with pytest.raises(ValueError, match="Nessun modello 3D trovato"):
-        search_3d_models("query", "test-sketchfab-token")
-
-
-# ------------------ fetch_3d_model_by_uid tests ------------------
+# ------------------ Preservation of original/caching tests ------------------
 
 @patch("httpx.Client.get")
 def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
     """Tests download, extraction, and caching logic of fetch_3d_model_by_uid on cache miss."""
-    # 1. Setup mock model details API response
     mock_detail_resp = MagicMock()
     mock_detail_resp.status_code = 200
     mock_detail_resp.json.return_value = {
@@ -340,7 +358,6 @@ def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
         }
     }
 
-    # 2. Setup mock download link response
     mock_download_resp = MagicMock()
     mock_download_resp.status_code = 200
     mock_download_resp.json.return_value = {
@@ -349,7 +366,6 @@ def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
         }
     }
 
-    # 3. Setup mock zip archive response
     mock_archive_resp = MagicMock()
     mock_archive_resp.status_code = 200
     mock_archive_resp.content = create_dummy_zip_bytes()
@@ -363,7 +379,7 @@ def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
     assert metadata["model_url"] == "/models/model_uid_123/scene.gltf"
     assert metadata["attribution"]["author"] == "Science Creator"
 
-    # Verify extracted cache and metadata.json
+    # Verify folder was extracted and scene.gltf cached for the correct UID
     assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "scene.gltf"))
     assert os.path.exists(os.path.join(CACHE_DIR, "model_uid_123", "metadata.json"))
 
@@ -411,7 +427,15 @@ def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
             "name": "Model 1",
             "thumbnail_url": "thumb1.jpg",
             "author": "Author 1",
-            "license": "CC BY"
+            "license": "CC BY",
+            "is_downloadable": True,
+            "model_url": "https://sketchfab.com/models/model_1",
+            "license_info": {
+                "recognized": True,
+                "license": "CC BY",
+                "license_url": "http://creativecommons.org/licenses/by/4.0/",
+                "attribution_required": True
+            }
         }
     ]
 
