@@ -8,7 +8,6 @@ import zipfile
 import io
 import shutil
 import pytest
-import httpx
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -18,10 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from services.model_service import (
     search_3d_models,
     fetch_3d_model_by_uid,
-    resolve_license,
-    is_cc_licensed,
     score_relevance,
-    CACHE_DIR
+    CACHE_DIR,
 )
 from main import app
 
@@ -48,35 +45,40 @@ def create_dummy_zip_bytes() -> bytes:
 
 # ------------------ Phase 4 Specific Tests (TEST 1 - TEST 10) ------------------
 
+
 # TEST 1: First page contains at least 8 candidates valid.
 @patch("httpx.Client.get")
 def test_pagination_test1_enough_candidates_first_page(mock_get: MagicMock) -> None:
     """Tests that search stops after first page and requests max 8 results if first page has >= 8 valid candidates."""
     mock_results = []
     for i in range(10):
-        mock_results.append({
-            "uid": f"uid_{i}",
-            "name": f"Elephant Model {i}",
-            "isDownloadable": True,
-            "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"} # CC BY
-        })
+        mock_results.append(
+            {
+                "uid": f"uid_{i}",
+                "name": f"Elephant Model {i}",
+                "isDownloadable": True,
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},  # CC BY
+            }
+        )
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
         "next": "https://api.sketchfab.com/v3/models?cursor=next_page",
-        "results": mock_results
+        "results": mock_results,
     }
     mock_get.return_value = mock_resp
 
     results = search_3d_models("elephant", "test-token")
 
-    assert len(results) == 8 # Limit to MAX_RESULTS
-    assert mock_get.call_count == 1 # Only single page fetched!
+    assert len(results) == 8  # Limit to MAX_RESULTS
+    assert mock_get.call_count == 1  # Only single page fetched!
 
 
 # TEST 2: First page contains less than 8 candidates valid and "next" exists.
 @patch("httpx.Client.get")
-def test_pagination_test2_insufficient_first_page_goes_to_second(mock_get: MagicMock) -> None:
+def test_pagination_test2_insufficient_first_page_goes_to_second(
+    mock_get: MagicMock,
+) -> None:
     """Tests that search goes to second page if first page has < 8 valid candidates."""
     mock_page1 = MagicMock()
     mock_page1.status_code = 200
@@ -87,9 +89,9 @@ def test_pagination_test2_insufficient_first_page_goes_to_second(mock_get: Magic
                 "uid": "uid_1",
                 "name": "Elephant CCBY",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             }
-        ]
+        ],
     }
     mock_page2 = MagicMock()
     mock_page2.status_code = 200
@@ -100,15 +102,15 @@ def test_pagination_test2_insufficient_first_page_goes_to_second(mock_get: Magic
                 "uid": "uid_2",
                 "name": "Elephant CC0",
                 "isDownloadable": True,
-                "license": {"uid": "7c23a1ba438d4306920229c12afcb5f9"}
+                "license": {"uid": "7c23a1ba438d4306920229c12afcb5f9"},
             }
-        ]
+        ],
     }
     mock_get.side_effect = [mock_page1, mock_page2]
 
     results = search_3d_models("elephant", "test-token")
     assert len(results) == 2
-    assert mock_get.call_count == 2 # Fetched page 1 and page 2
+    assert mock_get.call_count == 2  # Fetched page 1 and page 2
 
 
 # TEST 3: The second page contains enough candidates.
@@ -124,9 +126,10 @@ def test_pagination_test3_stops_when_enough_accumulated(mock_get: MagicMock) -> 
                 "uid": f"p1_{i}",
                 "name": "Elephant",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
-            } for i in range(4)
-        ]
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+            }
+            for i in range(4)
+        ],
     }
     mock_page2 = MagicMock()
     mock_page2.status_code = 200
@@ -137,17 +140,18 @@ def test_pagination_test3_stops_when_enough_accumulated(mock_get: MagicMock) -> 
                 "uid": f"p2_{i}",
                 "name": "Elephant",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
-            } for i in range(5)
-        ]
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+            }
+            for i in range(5)
+        ],
     }
     mock_page3 = MagicMock()
 
     mock_get.side_effect = [mock_page1, mock_page2, mock_page3]
 
     results = search_3d_models("elephant", "test-token")
-    assert len(results) == 8 # exact limit
-    assert mock_get.call_count == 2 # Did not request page 3!
+    assert len(results) == 8  # exact limit
+    assert mock_get.call_count == 2  # Did not request page 3!
 
 
 # TEST 4: No next page.
@@ -163,9 +167,9 @@ def test_pagination_test4_no_next_page(mock_get: MagicMock) -> None:
                 "uid": "uid_1",
                 "name": "Elephant",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             }
-        ]
+        ],
     }
     mock_get.return_value = mock_page1
 
@@ -189,17 +193,17 @@ def test_pagination_test5_max_search_pages_limit(mock_get: MagicMock) -> None:
                     "uid": f"uid_{i}",
                     "name": "Elephant",
                     "isDownloadable": True,
-                    "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                    "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
                 }
-            ]
+            ],
         }
         mock_pages.append(m)
 
     mock_get.side_effect = mock_pages
 
     results = search_3d_models("elephant", "test-token")
-    assert len(results) == 3 # 3 pages, 1 result each
-    assert mock_get.call_count == 3 # Strictly bounded to MAX_SEARCH_PAGES = 3!
+    assert len(results) == 3  # 3 pages, 1 result each
+    assert mock_get.call_count == 3  # Strictly bounded to MAX_SEARCH_PAGES = 3!
 
 
 # TEST 6: Same UID present in multiple pages.
@@ -215,9 +219,9 @@ def test_pagination_test6_deduplication_by_uid(mock_get: MagicMock) -> None:
                 "uid": "duplicate_uid",
                 "name": "Elephant P1",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             }
-        ]
+        ],
     }
     mock_page2 = MagicMock()
     mock_page2.status_code = 200
@@ -228,21 +232,23 @@ def test_pagination_test6_deduplication_by_uid(mock_get: MagicMock) -> None:
                 "uid": "duplicate_uid",
                 "name": "Elephant P2",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             }
-        ]
+        ],
     }
     mock_get.side_effect = [mock_page1, mock_page2]
 
     results = search_3d_models("elephant", "test-token")
     assert len(results) == 1
     assert results[0]["uid"] == "duplicate_uid"
-    assert results[0]["name"] == "Elephant P1" # Kept first occurrence
+    assert results[0]["name"] == "Elephant P1"  # Kept first occurrence
 
 
 # TEST 7: Ranking.
 @patch("httpx.Client.get")
-def test_ranking_test7_prioritizes_query_match_over_unrelated(mock_get: MagicMock) -> None:
+def test_ranking_test7_prioritizes_query_match_over_unrelated(
+    mock_get: MagicMock,
+) -> None:
     """Tests that candidates matching the query keyword are prioritized over unrelated ones (Charger)."""
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -253,27 +259,27 @@ def test_ranking_test7_prioritizes_query_match_over_unrelated(mock_get: MagicMoc
                 "uid": "uid_charger",
                 "name": "Charger Model",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             },
             {
                 "uid": "uid_elephant_exact",
                 "name": "Elephant",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             },
             {
                 "uid": "uid_african_elephant",
                 "name": "African Elephant",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
             },
             {
                 "uid": "uid_elephant_model",
                 "name": "Elephant Model Design",
                 "isDownloadable": True,
-                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"}
-            }
-        ]
+                "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+            },
+        ],
     }
     mock_get.return_value = mock_resp
 
@@ -311,7 +317,9 @@ def test_ranking_test9_multi_word_tokenization() -> None:
 
 # TEST 10: Regression of downloadable=true and license resolver.
 @patch("httpx.Client.get")
-def test_regression_test10_downloadable_and_license_resolver(mock_get: MagicMock) -> None:
+def test_regression_test10_downloadable_and_license_resolver(
+    mock_get: MagicMock,
+) -> None:
     """Verifies that downloadable=true is set in params and license resolver maps properly."""
     mock_search_resp = MagicMock()
     mock_search_resp.status_code = 200
@@ -324,10 +332,10 @@ def test_regression_test10_downloadable_and_license_resolver(mock_get: MagicMock
                 "isDownloadable": True,
                 "license": {
                     "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
-                    "label": "CC Attribution"
-                }
+                    "label": "CC Attribution",
+                },
             }
-        ]
+        ],
     }
     mock_get.return_value = mock_search_resp
 
@@ -339,6 +347,7 @@ def test_regression_test10_downloadable_and_license_resolver(mock_get: MagicMock
 
 # ------------------ Preservation of original/caching tests ------------------
 
+
 @patch("httpx.Client.get")
 def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
     """Tests download, extraction, and caching logic of fetch_3d_model_by_uid on cache miss."""
@@ -348,22 +357,14 @@ def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
         "uid": "model_uid_123",
         "name": "Water Molecule H2O",
         "viewerUrl": "https://sketchfab.com/models/model_uid_123",
-        "user": {
-            "username": "science_creator",
-            "displayName": "Science Creator"
-        },
-        "license": {
-            "slug": "by",
-            "fullName": "CC Attribution"
-        }
+        "user": {"username": "science_creator", "displayName": "Science Creator"},
+        "license": {"slug": "by", "fullName": "CC Attribution"},
     }
 
     mock_download_resp = MagicMock()
     mock_download_resp.status_code = 200
     mock_download_resp.json.return_value = {
-        "gltf": {
-            "url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip"
-        }
+        "gltf": {"url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip"}
     }
 
     mock_archive_resp = MagicMock()
@@ -399,11 +400,12 @@ def test_fetch_3d_model_by_uid_cache_hit_skips_download(mock_get: MagicMock) -> 
         "attribution": {
             "author": "Cached Science Creator",
             "license": "CC Attribution",
-            "source_url": "https://sketchfab.com/models/model_uid_123"
-        }
+            "source_url": "https://sketchfab.com/models/model_uid_123",
+        },
     }
     with open(os.path.join(model_dir, "metadata.json"), "w") as f:
         import json
+
         json.dump(cached_metadata, f)
 
     metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
@@ -417,6 +419,7 @@ def test_fetch_3d_model_by_uid_cache_hit_skips_download(mock_get: MagicMock) -> 
 
 
 # ------------------ End-to-End API Routing Tests ------------------
+
 
 @patch("main.search_3d_models")
 def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
@@ -434,22 +437,17 @@ def test_api_search_3d_models_success(mock_search: MagicMock) -> None:
                 "recognized": True,
                 "license": "CC BY",
                 "license_url": "http://creativecommons.org/licenses/by/4.0/",
-                "attribution_required": True
-            }
+                "attribution_required": True,
+            },
         }
     ]
 
     client = TestClient(app)
     headers = {
         "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "test-sketchfab-token"
+        "X-Sketchfab-Token": "test-sketchfab-token",
     }
-    payload = {
-        "action": "search_3d_models",
-        "data": {
-            "query": "H2O"
-        }
-    }
+    payload = {"action": "search_3d_models", "data": {"query": "H2O"}}
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
@@ -471,21 +469,16 @@ def test_api_select_3d_model_success(mock_fetch: MagicMock) -> None:
         "attribution": {
             "author": "Creator display",
             "license": "CC Attribution",
-            "source_url": "https://sketchfab.com/models/model_uid_abc"
-        }
+            "source_url": "https://sketchfab.com/models/model_uid_abc",
+        },
     }
 
     client = TestClient(app)
     headers = {
         "Authorization": "Bearer test_secret_token",
-        "X-Sketchfab-Token": "test-sketchfab-token"
+        "X-Sketchfab-Token": "test-sketchfab-token",
     }
-    payload = {
-        "action": "select_3d_model",
-        "data": {
-            "uid": "model_uid_abc"
-        }
-    }
+    payload = {"action": "select_3d_model", "data": {"uid": "model_uid_abc"}}
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
@@ -502,12 +495,7 @@ def test_api_search_3d_models_missing_credentials() -> None:
     """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error if X-Sketchfab-Token is absent on search."""
     client = TestClient(app)
     headers = {"Authorization": "Bearer test_secret_token"}
-    payload = {
-        "action": "search_3d_models",
-        "data": {
-            "query": "H2O"
-        }
-    }
+    payload = {"action": "search_3d_models", "data": {"query": "H2O"}}
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200
@@ -522,12 +510,7 @@ def test_api_select_3d_model_missing_credentials() -> None:
     """Tests POST /api/v1/analyze returns MISSING_CREDENTIALS error if X-Sketchfab-Token is absent on select."""
     client = TestClient(app)
     headers = {"Authorization": "Bearer test_secret_token"}
-    payload = {
-        "action": "select_3d_model",
-        "data": {
-            "uid": "model_uid_123"
-        }
-    }
+    payload = {"action": "select_3d_model", "data": {"uid": "model_uid_123"}}
 
     resp = client.post("/api/v1/analyze", json=payload, headers=headers)
     assert resp.status_code == 200

@@ -95,6 +95,67 @@
             overflow-x: auto;
             text-align: left;
         }
+
+        /* Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-box {
+            background: #1e1e2e;
+            color: #cdd6f4;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 450px;
+            width: 90%;
+            border: 1px solid #45475a;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            box-sizing: border-box;
+        }
+        .modal-box h2 {
+            font-size: 15px;
+            margin-top: 0;
+            color: #89b4fa;
+        }
+        .modal-box p {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #a6adc8;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .modal-btn-cancel {
+            background: #45475a;
+            color: #cdd6f4;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            height: 32px;
+        }
+        .modal-btn-confirm {
+            background: #a6e3a1;
+            color: #11111b;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            height: 32px;
+        }
     </style>
 </head>
 <body>
@@ -357,22 +418,82 @@
 
                 results.forEach(item => {
                     const thumbUrl = item.thumbnail_url || "https://sketchfab.com/static/images/placeholders/placeholder-model.png";
+                    const name = item.name || "Modello 3D";
+                    const author = item.author || "Autore non specificato";
+                    const hasLicenseInfo = !!item.license_info;
+
+                    let licenseLabel = "Informazioni sulla licenza non disponibili";
+                    let licUrl = "";
+                    let isAttributionRequired = true; // default safe assumption
+                    let hasValidLicense = false;
+
+                    if (hasLicenseInfo && item.license_info.recognized) {
+                        licenseLabel = item.license_info.license || item.license || "CC BY";
+                        licUrl = item.license_info.license_url || "";
+                        isAttributionRequired = item.license_info.attribution_required !== false;
+                        hasValidLicense = true;
+                    } else if (item.license) {
+                        licenseLabel = item.license;
+                    }
+
+                    const externalUrl = item.model_url || "";
+
+                    let licHtml = "";
+                    if (hasValidLicense) {
+                        licHtml += `<div>Licenza: `;
+                        if (licUrl) {
+                            licHtml += `<a href="${escapeHTML(licUrl)}" target="_blank" style="color: #f9e2af; text-decoration: underline; font-weight: bold;">${escapeHTML(licenseLabel)}</a>`;
+                        } else {
+                            licHtml += `<span style="color: #f9e2af; font-weight: bold;">${escapeHTML(licenseLabel)}</span>`;
+                        }
+                        licHtml += `</div>`;
+
+                        if (isAttributionRequired) {
+                            licHtml += `<div style="font-size: 10px; color: #f9e2af; font-weight: bold; margin-top: 4px;">⚠️ Attribuzione richiesta</div>`;
+                        } else {
+                            licHtml += `<div style="font-size: 10px; color: #a6e3a1; font-weight: bold; margin-top: 4px;">✅ Attribuzione non richiesta</div>`;
+                        }
+                    } else {
+                        licHtml += `<div style="font-size: 10px; color: #f38ba8; font-weight: bold; margin-top: 4px;">⚠️ Informazioni sulla licenza non disponibili</div>`;
+                    }
+
+                    let extLinkHtml = "";
+                    if (externalUrl) {
+                        extLinkHtml = `<div style="margin-top: 6px;"><a href="${escapeHTML(externalUrl)}" target="_blank" style="font-size: 11px; color: #89b4fa; text-decoration: underline;">Apri su Sketchfab 🌐</a></div>`;
+                    }
+
+                    const escName = name.replace(/'/g, "\\'");
+                    const escAuthor = author.replace(/'/g, "\\'");
+                    const escLicense = licenseLabel.replace(/'/g, "\\'");
+                    const escLicUrl = licUrl.replace(/'/g, "\\'");
+
                     html += `
-                        <button class="model-card" onclick="selectModel('${escapeHTML(item.uid)}')" style="display: flex; flex-direction: column; background: #242535; border: 1px solid #45475a; border-radius: 8px; padding: 10px; cursor: pointer; text-align: left; width: 100%; min-height: 180px; box-sizing: border-box; transition: background 0.2s;" data-uid="${escapeHTML(item.uid)}">
-                            <img src="${escapeHTML(thumbUrl)}" alt="${escapeHTML(item.name)}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: #11111b; margin-bottom: 8px; pointer-events: none;" />
-                            <div style="font-weight: bold; font-size: 12px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 4px; pointer-events: none;">${escapeHTML(item.name)}</div>
-                            <div style="font-size: 11px; color: #a6adc8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 6px; pointer-events: none;">Da: ${escapeHTML(item.author)}</div>
-                            <span style="font-size: 9px; font-weight: bold; background: #f9e2af; color: #11111b; padding: 2px 6px; border-radius: 4px; pointer-events: none; align-self: flex-start;">${escapeHTML(item.license)}</span>
-                        </button>
+                        <div class="model-card-item" style="display: flex; flex-direction: column; background: #242535; border: 1px solid #45475a; border-radius: 8px; padding: 12px; text-align: left; width: 100%; min-height: 270px; box-sizing: border-box;" data-uid="${escapeHTML(item.uid)}">
+                            <img src="${escapeHTML(thumbUrl)}" alt="${escapeHTML(name)}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: #11111b; margin-bottom: 8px;" />
+                            <div style="font-weight: bold; font-size: 12px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 4px;">${escapeHTML(name)}</div>
+                            <div style="font-size: 11px; color: #a6adc8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 6px;">Autore: ${escapeHTML(author)}</div>
+
+                            <div style="font-size: 11px; color: #cdd6f4; margin-bottom: 6px;">
+                                ${licHtml}
+                            </div>
+
+                            <div style="font-size: 10px; color: #a6e3a1; font-weight: bold; margin-bottom: 4px;">
+                                ✓ Scaricabile
+                            </div>
+
+                            <div style="font-size: 10px; font-weight: bold; background: #89b4fa; color: #11111b; padding: 2px 6px; border-radius: 4px; display: inline-block; align-self: flex-start; margin-bottom: 8px;">
+                                🎓 Uso didattico consentito
+                            </div>
+
+                            ${extLinkHtml}
+
+                            <button class="btn-download-trigger" onclick="requestDownloadModel('${escapeHTML(item.uid)}', '${escapeHTML(escName)}', '${escapeHTML(escAuthor)}', '${escapeHTML(escLicense)}', '${escapeHTML(escLicUrl)}', ${isAttributionRequired})" style="margin-top: auto; width: 100%; height: 32px; padding: 0; font-size: 11px; background: #a6e3a1; color: #11111b; border-radius: 6px; font-weight: bold; cursor: pointer; border: none;">Scarica modello</button>
+                        </div>
                     `;
                 });
 
                 html += `
                     </div>
-                    <style>
-                        .model-card:hover { background: #313244 !important; }
-                        .model-card:focus { border-color: #89b4fa !important; outline: none; }
-                    </style>
                 `;
                 out.innerHTML = html;
             } else if (data.type === "summary") {
@@ -1200,6 +1321,73 @@
         }, 8000);
 
         connectWebSocket();
+
+        // --- License Confirmation Modal Logic (Phase 5) ---
+        let activeDownloadUid = null;
+
+        window.requestDownloadModel = function(uid, name, author, license, licenseUrl, attributionRequired) {
+            activeDownloadUid = uid;
+
+            const modal = document.getElementById("license-modal");
+            const text = document.getElementById("modal-text");
+            if (!modal || !text) return;
+
+            let attributionText = "";
+            if (attributionRequired === "true" || attributionRequired === true) {
+                attributionText = "L'autore deve essere attribuito secondo i termini della licenza. Spiegazione breve: l'utilizzo di questo modello richiede il rispetto delle condizioni di attribuzione citando la fonte e l'autore.";
+            } else {
+                attributionText = "Questa licenza non richiede attribuzione obbligatoria per l'uso scolastico o didattico.";
+            }
+
+            let licLink = "";
+            if (licenseUrl) {
+                licLink = `<br><br>Leggi i termini completi della licenza qui: <a href="${escapeHTML(licenseUrl)}" target="_blank" style="color: #89b4fa; text-decoration: underline;">Termini Licenza 🌐</a>`;
+            }
+
+            text.innerHTML = `Stai per avviare il processo di download per il modello 3D <b>${escapeHTML(name)}</b> creato da <i>${escapeHTML(author)}</i>.<br><br>` +
+                             `Questo modello è distribuito con licenza <b>${escapeHTML(license)}</b>.<br><br>` +
+                             `${attributionText}${licLink}`;
+
+            modal.style.display = "flex";
+            const cancelBtn = modal.querySelector(".modal-btn-cancel");
+            if (cancelBtn) cancelBtn.focus();
+        };
+
+        window.closeLicenseModal = function() {
+            const modal = document.getElementById("license-modal");
+            if (modal) {
+                modal.style.display = "none";
+            }
+            activeDownloadUid = null;
+        };
+
+        window.confirmLicenseDownload = function() {
+            if (activeDownloadUid) {
+                placeholderDownloadHandler(activeDownloadUid);
+            }
+            closeLicenseModal();
+        };
+
+        window.placeholderDownloadHandler = function(uid) {
+            console.log(`[Placeholder] Richiesta download confermata per modello UID: ${uid}`);
+            const toast = document.getElementById("toast-banner");
+            if (toast) {
+                toast.innerText = "ℹ️ Conferma ricevuta! Il download reale sarà disponibile nella Fase 6.";
+                toast.style.display = "block";
+                setTimeout(() => { toast.style.display = "none"; }, 5000);
+            }
+        };
     </script>
+
+    <div id="license-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-box">
+            <h2 id="modal-title">Conferma Licenza Modello 3D</h2>
+            <p id="modal-text"></p>
+            <div class="modal-buttons">
+                <button class="modal-btn-cancel" onclick="closeLicenseModal()">Annulla</button>
+                <button class="modal-btn-confirm" id="modal-btn-continue" onclick="confirmLicenseDownload()">Continua</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
