@@ -357,44 +357,22 @@
 
                 results.forEach(item => {
                     const thumbUrl = item.thumbnail_url || "https://sketchfab.com/static/images/placeholders/placeholder-model.png";
-                    const hasLicenseInfo = !!item.license_info;
-                    const licUrl = hasLicenseInfo ? item.license_info.license_url : "https://creativecommons.org/licenses/";
-                    const isAttributionRequired = hasLicenseInfo ? item.license_info.attribution_required : true;
-                    const externalUrl = item.model_url || `https://sketchfab.com/models/${item.uid}`;
-
                     html += `
-                        <div class="model-card" style="display: flex; flex-direction: column; background: #242535; border: 1px solid #45475a; border-radius: 8px; padding: 12px; text-align: left; width: 100%; min-height: 270px; box-sizing: border-box; transition: background 0.2s;" data-uid="${escapeHTML(item.uid)}">
-                            <img src="${escapeHTML(thumbUrl)}" alt="${escapeHTML(item.name)}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: #11111b; margin-bottom: 8px;" />
-                            <div style="font-weight: bold; font-size: 12px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 4px;">${escapeHTML(item.name)}</div>
-                            <div style="font-size: 11px; color: #a6adc8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 6px;">Da: ${escapeHTML(item.author)}</div>
-
-                            <div style="font-size: 10px; margin-bottom: 4px;">
-                                Licenza: <a href="${escapeHTML(licUrl)}" target="_blank" style="color: #f9e2af; text-decoration: underline; font-weight: bold;">${escapeHTML(item.license)}</a>
-                            </div>
-
-                            <div style="font-size: 9px; font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-bottom: 4px; display: inline-block; background: ${isAttributionRequired ? 'rgba(249, 226, 175, 0.2)' : 'rgba(166, 227, 161, 0.2)'}; color: ${isAttributionRequired ? '#f9e2af' : '#a6e3a1'};">
-                                ${isAttributionRequired ? '⚠️ Richiede Attribuzione' : '✅ Attribuzione non richiesta'}
-                            </div>
-
-                            <div style="font-size: 9px; color: #a6e3a1; font-weight: bold; margin-bottom: 4px;">
-                                📥 Modello Scaricabile (Official API)
-                            </div>
-
-                            <div style="font-size: 9px; font-weight: bold; background: #89b4fa; color: #11111b; padding: 2px 4px; border-radius: 4px; display: inline-block; align-self: flex-start; margin-bottom: 8px;">
-                                🎓 Uso didattico consentito
-                            </div>
-
-                            <div style="margin-bottom: 8px;">
-                                <a href="${escapeHTML(externalUrl)}" target="_blank" style="font-size: 10px; color: #89b4fa; text-decoration: underline;">Vedi su Sketchfab 🌐</a>
-                            </div>
-
-                            <button class="btn-download-model" onclick="selectModel('${escapeHTML(item.uid)}')" style="margin-top: auto; width: 100%; height: 28px; padding: 0; font-size: 11px; background: #a6e3a1; color: #11111b; border-radius: 4px; font-weight: bold; cursor: pointer; border: none;">Scarica 📥</button>
-                        </div>
+                        <button class="model-card" onclick="selectModel('${escapeHTML(item.uid)}')" style="display: flex; flex-direction: column; background: #242535; border: 1px solid #45475a; border-radius: 8px; padding: 10px; cursor: pointer; text-align: left; width: 100%; min-height: 180px; box-sizing: border-box; transition: background 0.2s;" data-uid="${escapeHTML(item.uid)}">
+                            <img src="${escapeHTML(thumbUrl)}" alt="${escapeHTML(item.name)}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: #11111b; margin-bottom: 8px; pointer-events: none;" />
+                            <div style="font-weight: bold; font-size: 12px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 4px; pointer-events: none;">${escapeHTML(item.name)}</div>
+                            <div style="font-size: 11px; color: #a6adc8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; margin-bottom: 6px; pointer-events: none;">Da: ${escapeHTML(item.author)}</div>
+                            <span style="font-size: 9px; font-weight: bold; background: #f9e2af; color: #11111b; padding: 2px 6px; border-radius: 4px; pointer-events: none; align-self: flex-start;">${escapeHTML(item.license)}</span>
+                        </button>
                     `;
                 });
 
                 html += `
                     </div>
+                    <style>
+                        .model-card:hover { background: #313244 !important; }
+                        .model-card:focus { border-color: #89b4fa !important; outline: none; }
+                    </style>
                 `;
                 out.innerHTML = html;
             } else if (data.type === "summary") {
