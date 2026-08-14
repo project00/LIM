@@ -394,18 +394,19 @@ async def handle_select_3d_model(
         remote_base = os.path.dirname(remote_model_url)
 
     os.makedirs(model_dir, exist_ok=True)
+    import shutil
 
-    # Download scene.gltf
-    gltf_url = f"{settings.remote_base_url}{remote_model_url}"
-    gltf_resp = await http_client.get(gltf_url, headers=headers)
-    gltf_resp.raise_for_status()
-    gltf_text = gltf_resp.text
-
-    with open(gltf_file, "w", encoding="utf-8") as f:
-        f.write(gltf_text)
-
-    # Parse and download dependent assets
     try:
+        # Download scene.gltf
+        gltf_url = f"{settings.remote_base_url}{remote_model_url}"
+        gltf_resp = await http_client.get(gltf_url, headers=headers)
+        gltf_resp.raise_for_status()
+        gltf_text = gltf_resp.text
+
+        with open(gltf_file, "w", encoding="utf-8") as f:
+            f.write(gltf_text)
+
+        # Parse and download dependent assets
         gltf_json = json.loads(gltf_text)
         dependent_uris = []
 
@@ -431,17 +432,30 @@ async def handle_select_3d_model(
                 f.write(uri_resp.content)
             logger.info("Daemon cached dependent resource: '%s'", uri)
 
-    except Exception as e:
-        logger.error("Failed to cache dependent assets for model UID %s: %s", uid, e)
+        # Save metadata
+        metadata = {
+            "uid": response_data.get("uid", uid),
+            "title": response_data.get("label", uid),
+            "attribution": response_data.get("attribution", {}),
+        }
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=4)
 
-    # Save metadata
-    metadata = {
-        "uid": response_data.get("uid", uid),
-        "title": response_data.get("label", uid),
-        "attribution": response_data.get("attribution", {}),
-    }
-    with open(metadata_file, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(
+            "Failed to download or cache local model assets for model UID %s: %s",
+            uid,
+            e,
+        )
+        # Safe Cleanup on Failure: delete partial cached folder
+        if os.path.exists(model_dir):
+            shutil.rmtree(model_dir, ignore_errors=True)
+        return {
+            "type": "error",
+            "code": "EXTRACTION_FAILED",
+            "action": "select_3d_model",
+            "message": f"Errore durante il caching locale dei componenti 3D: {str(e)}",
+        }
 
     return {
         "type": "model_3d",

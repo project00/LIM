@@ -626,6 +626,12 @@
                     }
                 }
             } else if (data.type === "model_3d") {
+                const toast = document.getElementById("toast-banner");
+                if (toast) {
+                    toast.innerText = "ℹ️ Modello scaricato correttamente.";
+                    toast.style.display = "block";
+                    setTimeout(() => { toast.style.display = "none"; }, 5000);
+                }
                 let html = `<model-viewer src="${data.model_url}" camera-controls auto-rotate shadow-intensity="1"></model-viewer>`;
 
                 if (data.attribution) {
@@ -1408,19 +1414,28 @@
 
         window.confirmLicenseDownload = function() {
             if (activeDownloadUid) {
-                placeholderDownloadHandler(activeDownloadUid);
+                // Show loading progress toast (Fase 6B)
+                const toast = document.getElementById("toast-banner");
+                if (toast) {
+                    toast.innerText = "ℹ️ Download in corso...";
+                    toast.style.display = "block";
+                }
+
+                // Send action to local daemon via WebSocket
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: "select_3d_model",
+                        data: { uid: activeDownloadUid }
+                    }));
+                } else {
+                    if (toast) {
+                        toast.innerText = "⚠️ Errore: Connessione al demone locale non attiva.";
+                        toast.style.display = "block";
+                        setTimeout(() => { toast.style.display = "none"; }, 5000);
+                    }
+                }
             }
             closeLicenseModal();
-        };
-
-        window.placeholderDownloadHandler = function(uid) {
-            console.log(`[Placeholder] Richiesta download confermata per modello UID: ${uid}`);
-            const toast = document.getElementById("toast-banner");
-            if (toast) {
-                toast.innerText = "ℹ️ Conferma ricevuta! Il download reale sarà disponibile nella Fase 6.";
-                toast.style.display = "block";
-                setTimeout(() => { toast.style.display = "none"; }, 5000);
-            }
         };
     </script>
 

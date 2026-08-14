@@ -7,6 +7,7 @@ import os
 import zipfile
 import io
 import shutil
+import json
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -348,8 +349,11 @@ def test_regression_test10_downloadable_and_license_resolver(
 # ------------------ Preservation of original/caching tests ------------------
 
 
+@patch("httpx.stream")
 @patch("httpx.Client.get")
-def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
+def test_fetch_3d_model_by_uid_cache_miss_success(
+    mock_get: MagicMock, mock_stream: MagicMock
+) -> None:
     """Tests download, extraction, and caching logic of fetch_3d_model_by_uid on cache miss."""
     mock_detail_resp = MagicMock()
     mock_detail_resp.status_code = 200
@@ -367,11 +371,13 @@ def test_fetch_3d_model_by_uid_cache_miss_success(mock_get: MagicMock) -> None:
         "gltf": {"url": "https://s3.amazonaws.com/sketchfab/archives/gltf.zip"}
     }
 
-    mock_archive_resp = MagicMock()
-    mock_archive_resp.status_code = 200
-    mock_archive_resp.content = create_dummy_zip_bytes()
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200, iter_bytes=lambda chunk_size: [create_dummy_zip_bytes()]
+    )
+    mock_stream.return_value = mock_stream_ctx
 
-    mock_get.side_effect = [mock_detail_resp, mock_download_resp, mock_archive_resp]
+    mock_get.side_effect = [mock_detail_resp, mock_download_resp]
 
     metadata = fetch_3d_model_by_uid("model_uid_123", "test-sketchfab-token")
 
@@ -519,3 +525,315 @@ def test_api_select_3d_model_missing_credentials() -> None:
     assert data["type"] == "error"
     assert data["code"] == "MISSING_CREDENTIALS"
     assert data["action"] == "select_3d_model"
+
+
+# ------------------ Fase 6B High-Security Download & ZIP Tests ------------------
+
+
+def test_fetch_3d_model_unauthenticated() -> None:
+    """Fase 6B: Checks that fetch_3d_model_by_uid raises RuntimeError on missing token."""
+    with pytest.raises(RuntimeError, match="Sketchfab access token is not configured"):
+        fetch_3d_model_by_uid("uid_123", "")
+
+
+@patch("httpx.Client.get")
+def test_fetch_3d_model_non_downloadable(mock_get: MagicMock) -> None:
+    """Fase 6B: Mocks a model with isDownloadable=False, verifying it is rejected."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "uid": "uid_not_dl",
+        "name": "Non-Downloadable Model",
+        "isDownloadable": False,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(ValueError, match="MODEL_NOT_DOWNLOADABLE"):
+        fetch_3d_model_by_uid("uid_not_dl", "test-token")
+
+
+@patch("httpx.Client.get")
+def test_fetch_3d_model_unrecognized_license(mock_get: MagicMock) -> None:
+    """Fase 6B: Mocks a model with unrecognized license payload, verifying rejection."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "uid": "uid_bad_lic",
+        "name": "Model with Bad License",
+        "isDownloadable": True,
+        "license": {"uid": "unknown_lic_uid_xyz"},
+    }
+    mock_get.return_value = mock_resp
+
+    with pytest.raises(ValueError, match="LICENSE_NOT_RECOGNIZED"):
+        fetch_3d_model_by_uid("uid_bad_lic", "test-token")
+
+
+def build_unsafe_zip_bytes(
+    filenames_attr_list: list[tuple[str, bytes | None]],
+) -> bytes:
+    """Helper to compile a custom ZIP archive in-memory with optional binary attributes."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zip_ref:
+        for fname, external_attr in filenames_attr_list:
+            info = zipfile.ZipInfo(fname)
+            if external_attr is not None:
+                # Set external attributes (e.g. for symlinks)
+                # UNIX symlink attributes is 0xA0000000 (represented as integer)
+                info.external_attr = int.from_bytes(external_attr, sys.byteorder)
+            zip_ref.writestr(info, "evil file payload")
+    return buf.getvalue()
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_zip_slip_traversal_attack(mock_stream: MagicMock, mock_get: MagicMock) -> None:
+    """Fase 6B: Mocks Zip Slip path traversal and verifies it is rejected and directory cleaned up."""
+    # Model details
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_slip_traversal",
+        "name": "Traversal Model",
+        "isDownloadable": True,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_detail
+
+    # Download URL response
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {
+        "gltf": {"url": "https://aws.s3/zip_slip_traversal.zip"}
+    }
+
+    # Stream S3 ZIP bytes
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200,
+        iter_bytes=lambda chunk_size: [
+            build_unsafe_zip_bytes([("../../evil_traversal.txt", None)])
+        ],
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        with pytest.raises(ValueError, match="UNSAFE_ARCHIVE_PATH"):
+            fetch_3d_model_by_uid("uid_slip_traversal", "test-token")
+
+    # Assert cache folder was safely cleaned up and deleted on failure
+    assert not os.path.exists(os.path.join(CACHE_DIR, "uid_slip_traversal"))
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_zip_slip_absolute_path_attack(
+    mock_stream: MagicMock, mock_get: MagicMock
+) -> None:
+    """Fase 6B: Mocks Zip Slip absolute path and verifies it is rejected."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_slip_abs",
+        "name": "Absolute Model",
+        "isDownloadable": True,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_detail
+
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {
+        "gltf": {"url": "https://aws.s3/zip_slip_abs.zip"}
+    }
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200,
+        iter_bytes=lambda chunk_size: [build_unsafe_zip_bytes([("/etc/passwd", None)])],
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        with pytest.raises(ValueError, match="UNSAFE_ARCHIVE_PATH"):
+            fetch_3d_model_by_uid("uid_slip_abs", "test-token")
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_zip_slip_windows_drive_attack(
+    mock_stream: MagicMock, mock_get: MagicMock
+) -> None:
+    """Fase 6B: Mocks Zip Slip Windows drive letter path and verifies it is rejected."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_slip_win",
+        "name": "Windows Model",
+        "isDownloadable": True,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_detail
+
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {
+        "gltf": {"url": "https://aws.s3/zip_slip_win.zip"}
+    }
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200,
+        iter_bytes=lambda chunk_size: [
+            build_unsafe_zip_bytes([("C:\\Windows\\system.ini", None)])
+        ],
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        with pytest.raises(ValueError, match="UNSAFE_ARCHIVE_PATH"):
+            fetch_3d_model_by_uid("uid_slip_win", "test-token")
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_zip_slip_symlink_attack(mock_stream: MagicMock, mock_get: MagicMock) -> None:
+    """Fase 6B: Mocks Zip with symlink entry and verifies it is rejected."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_slip_sym",
+        "name": "Symlink Model",
+        "isDownloadable": True,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_detail
+
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {
+        "gltf": {"url": "https://aws.s3/zip_slip_sym.zip"}
+    }
+
+    # external_attr for symlink is 0xA0000000 in UNIX (hex) -> 2684354560
+    sym_attr = (2684354560).to_bytes(4, sys.byteorder)
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200,
+        iter_bytes=lambda chunk_size: [
+            build_unsafe_zip_bytes([("sym_entry", sym_attr)])
+        ],
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        with pytest.raises(ValueError, match="UNSAFE_ARCHIVE_PATH"):
+            fetch_3d_model_by_uid("uid_slip_sym", "test-token")
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_archive_download_limit_exceeded(
+    mock_stream: MagicMock, mock_get: MagicMock
+) -> None:
+    """Fase 6B: Verifies archive exceeding MAX_DOWNLOAD_SIZE (50MB) is aborted during stream."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_large_dl",
+        "name": "Large Download Model",
+        "isDownloadable": True,
+        "license": {"uid": "322a749bcfa841b29dff1e8a1bb74b0b"},
+    }
+    mock_get.return_value = mock_detail
+
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {"gltf": {"url": "https://aws.s3/large.zip"}}
+
+    # Return a giga-chunk of bytes to force size violation immediately
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200, iter_bytes=lambda chunk_size: [b"x" * (50 * 1024 * 1024 + 1)]
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        with pytest.raises(ValueError, match="ARCHIVE_TOO_LARGE"):
+            fetch_3d_model_by_uid("uid_large_dl", "test-token")
+
+
+@patch("httpx.Client.get")
+@patch("httpx.stream")
+def test_metadata_and_attribution_file_creation(
+    mock_stream: MagicMock, mock_get: MagicMock
+) -> None:
+    """Fase 6B: Verifies that metadata.json, sf_attribution.json, and ATTRIBUTION.txt are properly written on success."""
+    mock_detail = MagicMock()
+    mock_detail.status_code = 200
+    mock_detail.json.return_value = {
+        "uid": "uid_success_att",
+        "name": "Compliant CC BY Model",
+        "isDownloadable": True,
+        "viewerUrl": "https://sketchfab.com/models/uid_success_att",
+        "user": {"username": "science_prof", "displayName": "Science Professor"},
+        "license": {
+            "uid": "322a749bcfa841b29dff1e8a1bb74b0b",
+            "label": "CC Attribution",
+        },
+    }
+    mock_get.return_value = mock_detail
+
+    mock_download = MagicMock()
+    mock_download.status_code = 200
+    mock_download.json.return_value = {"gltf": {"url": "https://aws.s3/success.zip"}}
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__.return_value = MagicMock(
+        status_code=200,
+        iter_bytes=lambda chunk_size: [build_unsafe_zip_bytes([("scene.gltf", None)])],
+    )
+    mock_stream.return_value = mock_stream_ctx
+
+    with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
+        fetch_3d_model_by_uid("uid_success_att", "test-token")
+
+    # Assert model was extracted successfully
+    model_dir = os.path.join(CACHE_DIR, "uid_success_att")
+    assert os.path.exists(os.path.join(model_dir, "scene.gltf"))
+
+    # Assert metadata.json was created correctly
+    metadata_path = os.path.join(model_dir, "metadata.json")
+    assert os.path.exists(metadata_path)
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert meta["source"] == "Sketchfab"
+    assert meta["model_uid"] == "uid_success_att"
+    assert meta["model_name"] == "Compliant CC BY Model"
+    assert meta["author"] == "Science Professor"
+    assert meta["license"] == "CC BY"
+    assert meta["attribution_required"] is True
+
+    # Assert sf_attribution.json was created correctly
+    sf_path = os.path.join(model_dir, "sf_attribution.json")
+    assert os.path.exists(sf_path)
+    with open(sf_path, "r", encoding="utf-8") as f:
+        sf_att = json.load(f)
+    assert sf_att["source"] == "Sketchfab"
+    assert sf_att["model_uid"] == "uid_success_att"
+    assert sf_att["author"] == "Science Professor"
+    assert sf_att["license"] == "CC BY"
+    assert sf_att["model_url"] == "https://sketchfab.com/models/uid_success_att"
+
+    # Assert ATTRIBUTION.txt was created correctly
+    txt_path = os.path.join(model_dir, "ATTRIBUTION.txt")
+    assert os.path.exists(txt_path)
+    with open(txt_path, "r", encoding="utf-8") as f:
+        txt = f.read()
+    assert "Model: Compliant CC BY Model" in txt
+    assert "Author: Science Professor" in txt
+    assert "Source: Sketchfab" in txt
+    assert "License: CC BY" in txt
+    assert "Attribution required: YES" in txt
