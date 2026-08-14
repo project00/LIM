@@ -572,6 +572,27 @@ async def analyze(
     x_sf_token = request.headers.get("X-Sketchfab-Token") or request.headers.get(
         "x-sketchfab-token"
     )
+    x_sf_session_id = request.headers.get(
+        "X-Sketchfab-Session-Id"
+    ) or request.headers.get("x-sketchfab-session-id")
+
+    # Fase 6A: Resolve active Sketchfab token.
+    # Prefer active OAuth user session token over the global static credential header (if active).
+    resolved_sf_token = x_sf_token
+    if x_sf_session_id and x_sf_session_id in SESSIONS:
+        session = SESSIONS[x_sf_session_id]
+        if time.time() <= session.get("expires_at", 0):
+            resolved_sf_token = session.get("access_token")
+            logger.info(
+                "Using resolved Sketchfab OAuth user token from SESSIONS storage for session_id=%s",
+                x_sf_session_id,
+            )
+        else:
+            logger.warning(
+                "Sketchfab OAuth session expired for session_id=%s, falling back to static token header if present.",
+                x_sf_session_id,
+            )
+            SESSIONS.pop(x_sf_session_id, None)
 
     # Missing credentials check for concept_map, generate_quiz, generate_summary, ocr_vision
     if (
@@ -587,10 +608,10 @@ async def analyze(
 
     # Extract credentials from payload if present (keeping compatibility)
     credentials = payload.get("credentials") or {}
-    if x_sf_token:
+    if resolved_sf_token:
         if "sketchfab" not in credentials:
             credentials["sketchfab"] = {}
-        credentials["sketchfab"]["access_token"] = x_sf_token
+        credentials["sketchfab"]["access_token"] = resolved_sf_token
 
     if action == "concept_map":
         data_obj = payload.get("data") or {}
@@ -621,12 +642,12 @@ async def analyze(
             }
 
     elif action == "search_3d_models":
-        if not x_sf_token:
+        if not resolved_sf_token:
             return {
                 "type": "error",
                 "code": "MISSING_CREDENTIALS",
                 "action": action,
-                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.",
+                "message": "Nessuna credenziale Sketchfab configurata o utente non autenticato. Vai su /setup o effettua l'accesso.",
             }
 
         data_obj = payload.get("data") or {}
@@ -638,7 +659,7 @@ async def analyze(
             )
 
         try:
-            results = search_3d_models(query, x_sf_token)
+            results = search_3d_models(query, resolved_sf_token)
             return {
                 "type": "model_search_results",
                 "source": "remote_index",
@@ -662,12 +683,12 @@ async def analyze(
             }
 
     elif action == "select_3d_model":
-        if not x_sf_token:
+        if not resolved_sf_token:
             return {
                 "type": "error",
                 "code": "MISSING_CREDENTIALS",
                 "action": action,
-                "message": "Nessuna credenziale Sketchfab configurata e abilitata. Vai su /setup per aggiungerne una.",
+                "message": "Nessuna credenziale Sketchfab configurata o utente non autenticato. Vai su /setup o effettua l'accesso.",
             }
 
         data_obj = payload.get("data") or {}
@@ -679,7 +700,7 @@ async def analyze(
             )
 
         try:
-            model_metadata = fetch_3d_model_by_uid(uid, x_sf_token)
+            model_metadata = fetch_3d_model_by_uid(uid, resolved_sf_token)
             return {
                 "type": "model_3d",
                 "source": "remote_index",
@@ -688,12 +709,32 @@ async def analyze(
                 "attribution": model_metadata["attribution"],
             }
         except ValueError as e:
-            logger.warning("3D model not found for uid '%s': %s", uid, e)
+            err_msg = str(e)
+            logger.warning(
+                "Sketchfab action select_3d_model failed with ValueError: %s", err_msg
+            )
+            # Map specific, granular custom ValueErrors directly to standard codes (Fase 6B)
+            mapped_codes = (
+                "MODEL_NOT_DOWNLOADABLE",
+                "LICENSE_NOT_RECOGNIZED",
+                "SKETCHFAB_FORBIDDEN",
+                "SKETCHFAB_NOT_FOUND",
+                "SKETCHFAB_RATE_LIMIT",
+                "DOWNLOAD_URL_MISSING",
+                "DOWNLOAD_FAILED",
+                "ARCHIVE_INVALID",
+                "ARCHIVE_TOO_LARGE",
+                "UNSAFE_ARCHIVE_PATH",
+                "EXTRACTION_FAILED",
+            )
+            code_to_return = "MODEL_NOT_FOUND"
+            if err_msg in mapped_codes:
+                code_to_return = err_msg
             return {
                 "type": "error",
-                "code": "MODEL_NOT_FOUND",
+                "code": code_to_return,
                 "action": "select_3d_model",
-                "message": str(e),
+                "message": f"Errore di scaricamento o licenza: {err_msg}",
             }
         except Exception as e:
             logger.error("Sketchfab download or service error: %s", e, exc_info=True)

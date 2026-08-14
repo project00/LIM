@@ -13,7 +13,6 @@ Design Note:
 import logging
 import os
 import zipfile
-import io
 import shutil
 import json
 import httpx
@@ -28,6 +27,11 @@ CACHE_DIR = os.path.abspath(
 # Configuration Constants
 MAX_SEARCH_PAGES = 3
 MAX_RESULTS = 8
+
+# Security Limits for Safe Extraction & Downloads (Fase 6B)
+MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILE_COUNT = 100  # 100 files max
+MAX_EXTRACTED_SIZE = 150 * 1024 * 1024  # 150MB uncompressed max
 
 # Centralized License Registry for supported Creative Commons licenses
 CC_LICENSE_REGISTRY = {
@@ -559,11 +563,28 @@ def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
                     response.status_code,
                     response.text,
                 )
+                if response.status_code == 404:
+                    raise ValueError("SKETCHFAB_NOT_FOUND")
+                if response.status_code in (401, 403):
+                    raise ValueError("SKETCHFAB_FORBIDDEN")
                 raise RuntimeError(
                     f"Sketchfab Model Detail API failure (HTTP {response.status_code}): {response.text}"
                 )
 
             model = response.json()
+
+            # Fase 6B: License Gate and Downloadable Validation Check
+            is_dl = model.get("isDownloadable")
+            if is_dl is False:
+                logger.warning(
+                    "Model %s is not downloadable (isDownloadable=False)", uid
+                )
+                raise ValueError("MODEL_NOT_DOWNLOADABLE")
+
+            resolved_lic = resolve_license(model.get("license"))
+            if not resolved_lic["recognized"]:
+                logger.warning("Model %s license is not recognized/compatible", uid)
+                raise ValueError("LICENSE_NOT_RECOGNIZED")
     except httpx.HTTPError as e:
         logger.error("Network error during Sketchfab model detail request: %s", e)
         raise RuntimeError(
@@ -614,6 +635,12 @@ def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
                         download_resp.status_code,
                         download_resp.text,
                     )
+                    if download_resp.status_code == 404:
+                        raise ValueError("SKETCHFAB_NOT_FOUND")
+                    if download_resp.status_code in (401, 403):
+                        raise ValueError("SKETCHFAB_FORBIDDEN")
+                    if download_resp.status_code == 429:
+                        raise ValueError("SKETCHFAB_RATE_LIMIT")
                     raise RuntimeError(
                         f"Sketchfab Download API failure (HTTP {download_resp.status_code}): {download_resp.text}"
                     )
@@ -628,76 +655,240 @@ def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
         gltf_info = download_info.get("gltf")
         if not gltf_info or not gltf_info.get("url"):
             logger.error("Sketchfab returned no glTF download URL: %s", download_info)
-            raise RuntimeError(
-                "Nessun link di download glTF disponibile per questo modello."
-            )
+            raise ValueError("DOWNLOAD_URL_MISSING")
 
         download_archive_url = gltf_info["url"]
         logger.info("Resolved glTF download URL: '%s'", download_archive_url)
 
-        # Download and extract the archive immediately
-        logger.info("Downloading binary model ZIP archive from AWS S3 resolved URL...")
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                archive_resp = client.get(download_archive_url)
-                logger.info(
-                    "Archive download response status code: %d",
-                    archive_resp.status_code,
-                )
-                if archive_resp.status_code != 200:
-                    logger.error(
-                        "Failed to download model archive from AWS S3. Status: %d",
-                        archive_resp.status_code,
-                    )
-                    raise RuntimeError(
-                        f"Download dell'archivio glTF fallito (HTTP {archive_resp.status_code})."
-                    )
+        # Download using HTTP stream to a secure temporary file (Fase 6B)
+        import tempfile
+        import re
+        import datetime
 
-                archive_bytes = archive_resp.content
-        except httpx.HTTPError as e:
-            logger.error("Network error during archive download: %s", e)
-            raise RuntimeError(
-                f"Errore di download dell'archivio glTF due to network error: {e}"
-            )
+        temp_zip_file = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+        temp_zip_path = temp_zip_file.name
+        temp_zip_file.close()
 
-        # Extract unzipped archive directly to cache directory
+        total_downloaded = 0
         logger.info(
-            "Extracting ZIP archive (%d bytes) to cache directory: %s",
-            len(archive_bytes),
-            model_dir,
+            "Streaming binary model ZIP archive to temporary file: %s", temp_zip_path
         )
         try:
-            with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zip_ref:
-                zip_ref.extractall(model_dir)
+            with open(temp_zip_path, "wb") as f_out:
+                with httpx.stream(
+                    "GET", download_archive_url, timeout=30.0
+                ) as stream_resp:
+                    if stream_resp.status_code != 200:
+                        raise ValueError("DOWNLOAD_FAILED")
+                    for chunk in stream_resp.iter_bytes(chunk_size=65536):
+                        total_downloaded += len(chunk)
+                        if total_downloaded > MAX_DOWNLOAD_SIZE:
+                            logger.error(
+                                "Download size exceeded MAX_DOWNLOAD_SIZE: %d bytes",
+                                MAX_DOWNLOAD_SIZE,
+                            )
+                            raise ValueError("ARCHIVE_TOO_LARGE")
+                        f_out.write(chunk)
             logger.info(
-                "Successfully extracted model archive into cache directory %s",
-                model_dir,
+                "Successfully downloaded %d bytes to temporary ZIP archive.",
+                total_downloaded,
             )
         except Exception as e:
-            logger.error("Unzipping glTF archive failed: %s", e)
-            # Cleanup broken folder on failure
+            if os.path.exists(temp_zip_path):
+                try:
+                    os.remove(temp_zip_path)
+                except Exception:
+                    pass
             if os.path.exists(model_dir):
-                shutil.rmtree(model_dir)
-            raise RuntimeError(f"Estrazione dell'archivio glTF fallita: {e}")
+                shutil.rmtree(model_dir, ignore_errors=True)
+            logger.error("Streaming model archive from AWS S3 failed: %s", e)
+            if isinstance(e, ValueError):
+                raise
+            raise RuntimeError(f"Download dell'archivio glTF fallito: {e}")
 
-    # Conforming return object
+        # Secure ZIP validation & extraction (Fase 6B)
+        logger.info("Validating and extracting model ZIP archive securely...")
+        try:
+            extracted_size = 0
+            file_count = 0
+
+            with zipfile.ZipFile(temp_zip_path, "r") as zip_ref:
+                infolist = zip_ref.infolist()
+
+                # Check file count limit
+                if len(infolist) > MAX_FILE_COUNT:
+                    logger.error(
+                        "ZIP archive contains %d files, exceeding MAX_FILE_COUNT=%d",
+                        len(infolist),
+                        MAX_FILE_COUNT,
+                    )
+                    raise ValueError("ARCHIVE_INVALID")
+
+                for entry in infolist:
+                    # Check uncompressed size limits
+                    extracted_size += entry.file_size
+                    if extracted_size > MAX_EXTRACTED_SIZE:
+                        logger.error(
+                            "ZIP cumulative uncompressed size exceeded MAX_EXTRACTED_SIZE=%d bytes",
+                            MAX_EXTRACTED_SIZE,
+                        )
+                        raise ValueError("ARCHIVE_TOO_LARGE")
+
+                    file_count += 1
+                    entry_name = entry.filename
+
+                    # 1. Zip Slip Protection: Reject absolute paths
+                    if (
+                        os.path.isabs(entry_name)
+                        or entry_name.startswith("/")
+                        or re.match(r"^[a-zA-Z]:", entry_name)
+                    ):
+                        logger.error(
+                            "Unsafe absolute path detected in ZIP entry: %s", entry_name
+                        )
+                        raise ValueError("UNSAFE_ARCHIVE_PATH")
+
+                    # 2. Zip Slip Protection: Reject traversals
+                    normalized_path = os.path.normpath(entry_name)
+                    if (
+                        ".." in normalized_path.split(os.path.sep)
+                        or ".." in normalized_path.split("/")
+                        or normalized_path.startswith("..")
+                    ):
+                        logger.error(
+                            "Unsafe path traversal detected in ZIP entry: %s",
+                            entry_name,
+                        )
+                        raise ValueError("UNSAFE_ARCHIVE_PATH")
+
+                    # 3. Reject symlinks and special files
+                    is_symlink = (entry.external_attr >> 16) & 0o170000 == 0o120000
+                    if is_symlink:
+                        logger.error(
+                            "Unsafe symbolic link entry detected in ZIP: %s", entry_name
+                        )
+                        raise ValueError("UNSAFE_ARCHIVE_PATH")
+
+                # Perform safe extraction
+                for entry in infolist:
+                    dest_path = os.path.abspath(os.path.join(model_dir, entry.filename))
+                    real_base = os.path.abspath(model_dir)
+                    if (
+                        not dest_path.startswith(real_base + os.path.sep)
+                        and dest_path != real_base
+                    ):
+                        logger.error(
+                            "Zip Slip path breakout attempt detected: %s", dest_path
+                        )
+                        raise ValueError("UNSAFE_ARCHIVE_PATH")
+
+                    if entry.is_dir():
+                        os.makedirs(dest_path, exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        with zip_ref.open(entry) as source_f, open(
+                            dest_path, "wb"
+                        ) as target_f:
+                            shutil.copyfileobj(source_f, target_f)
+
+            logger.info("Successfully completed safe unzipping of glTF model %s", uid)
+        except Exception as e:
+            logger.error("Extraction/unzipping of model ZIP failed: %s", e)
+            if os.path.exists(model_dir):
+                shutil.rmtree(model_dir, ignore_errors=True)
+            if isinstance(e, ValueError):
+                raise
+            raise RuntimeError(f"Estrazione dell'archivio glTF fallita: {e}")
+        finally:
+            # Always cleanup the temporary ZIP file
+            if os.path.exists(temp_zip_path):
+                try:
+                    os.remove(temp_zip_path)
+                except Exception as ex:
+                    logger.warning("Failed to remove temporary ZIP file: %s", ex)
+
+    # Conforming return object (cached metadata with attribution files)
     stable_local_url = f"/models/{uid}/scene.gltf"
-    res = {
+
+    # Resolve exact CC details for metadata
+    resolved_cc = resolve_license(model.get("license"))
+    is_attribution_req = resolved_cc.get("attribution_required") is not False
+    cc_license_name = resolved_cc.get("license") or license_name
+    cc_license_url = (
+        resolved_cc.get("license_url") or "http://creativecommons.org/licenses/by/4.0/"
+    )
+
+    # Create metadata.json format (Fase 6B)
+    metadata_res = {
+        "source": "Sketchfab",
+        "model_uid": uid,
+        "model_name": name,
+        "model_url": stable_local_url,
+        "author": author_name,
+        "license": cc_license_name,
+        "license_url": cc_license_url,
+        "attribution_required": is_attribution_req,
+        "downloaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "search_query": "",
+    }
+
+    # Create sf_attribution.json format (Fase 6B)
+    sf_attribution_res = {
+        "source": "Sketchfab",
+        "model_uid": uid,
+        "model_name": name,
+        "author": author_name,
+        "model_url": source_url,
+        "license": cc_license_name,
+        "license_url": cc_license_url,
+        "attribution_required": is_attribution_req,
+    }
+
+    # Create readable ATTRIBUTION.txt format (Fase 6B)
+    attrib_required_text = "YES" if is_attribution_req else "NO"
+    attribution_txt_content = (
+        f"Model: {name}\n"
+        f"Author: {author_name}\n"
+        f"Source: Sketchfab\n"
+        f"License: {cc_license_name}\n"
+        f"URL: {source_url}\n"
+        f"License URL: {cc_license_url}\n"
+        f"Attribution required: {attrib_required_text}\n"
+    )
+
+    # Save all metadata/attribution files inside model directory on success
+    try:
+        # Write metadata.json
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(metadata_res, f, ensure_ascii=False, indent=4)
+
+        # Write sf_attribution.json
+        with open(
+            os.path.join(model_dir, "sf_attribution.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(sf_attribution_res, f, ensure_ascii=False, indent=4)
+
+        # Write ATTRIBUTION.txt
+        with open(
+            os.path.join(model_dir, "ATTRIBUTION.txt"), "w", encoding="utf-8"
+        ) as f:
+            f.write(attribution_txt_content)
+
+        logger.info(
+            "Successfully generated metadata.json, sf_attribution.json, and ATTRIBUTION.txt for model %s",
+            uid,
+        )
+    except Exception as e:
+        logger.warning("Failed to save metadata/attribution files: %s", e)
+
+    # Ensure return object matches backward-compatible schema expectation
+    return {
         "uid": uid,
         "title": name,
         "model_url": stable_local_url,
         "attribution": {
             "author": author_name,
-            "license": license_name,
+            "license": cc_license_name,
             "source_url": source_url,
         },
     }
-
-    # Save to metadata.json in cached directory
-    try:
-        with open(metadata_file, "w", encoding="utf-8") as f:
-            json.dump(res, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logger.warning("Failed to save metadata.json to server cache: %s", e)
-
-    return res
