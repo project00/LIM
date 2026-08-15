@@ -785,7 +785,7 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     action: "select_3d_model",
-                    data: { uid: uid }
+                    data: { uid: uid, query: currentSearchQuery }
                 }));
             }
         }
@@ -794,6 +794,7 @@
             const inputEl = document.getElementById("input-model");
             const val = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
             if (!val) return;
+            currentSearchQuery = val;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     action: "search_3d_models",
@@ -1425,7 +1426,7 @@
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         action: "select_3d_model",
-                        data: { uid: activeDownloadUid }
+                        data: { uid: activeDownloadUid, query: currentSearchQuery }
                     }));
                 } else {
                     if (toast) {

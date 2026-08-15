@@ -491,7 +491,7 @@ def search_3d_models(query: str, sketchfab_token: str) -> list[dict]:
     return results
 
 
-def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
+def fetch_3d_model_by_uid(uid: str, sketchfab_token: str, query: str | None = None) -> dict:
     """
     Downloads, extracts, and caches a 3D model by its known UID, returning its metadata.
 
@@ -823,13 +823,14 @@ def fetch_3d_model_by_uid(uid: str, sketchfab_token: str) -> dict:
         "source": "Sketchfab",
         "model_uid": uid,
         "model_name": name,
-        "model_url": stable_local_url,
+        "model_url": source_url,
+        "downloaded_asset": "scene.gltf",
         "author": author_name,
         "license": cc_license_name,
         "license_url": cc_license_url,
         "attribution_required": is_attribution_req,
         "downloaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "search_query": "",
+        "search_query": query or "",
     }
 
     # Create sf_attribution.json format (Fase 6B)
