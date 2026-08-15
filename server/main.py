@@ -693,6 +693,7 @@ async def analyze(
 
         data_obj = payload.get("data") or {}
         uid = data_obj.get("uid")
+        query = data_obj.get("query")
         if not uid:
             raise HTTPException(
                 status_code=400,
@@ -700,7 +701,7 @@ async def analyze(
             )
 
         try:
-            model_metadata = fetch_3d_model_by_uid(uid, resolved_sf_token)
+            model_metadata = fetch_3d_model_by_uid(uid, resolved_sf_token, query=query)
             return {
                 "type": "model_3d",
                 "source": "remote_index",

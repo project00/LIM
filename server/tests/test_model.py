@@ -493,6 +493,38 @@ def test_api_select_3d_model_success(mock_fetch: MagicMock) -> None:
     assert data["type"] == "model_3d"
     assert data["source"] == "remote_index"
     assert data["model_url"] == "/models/model_uid_abc/scene.gltf"
+
+
+@patch("main.fetch_3d_model_by_uid")
+def test_api_select_3d_model_with_query_propagation(mock_fetch: MagicMock) -> None:
+    """Fase 6B.2: Tests POST /api/v1/analyze passes the search query to fetch_3d_model_by_uid."""
+    mock_fetch.return_value = {
+        "uid": "model_uid_abc",
+        "title": "Selected Model",
+        "model_url": "/models/model_uid_abc/scene.gltf",
+        "attribution": {
+            "author": "Creator display",
+            "license": "CC Attribution",
+            "source_url": "https://sketchfab.com/models/model_uid_abc",
+        },
+    }
+
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test_secret_token",
+        "X-Sketchfab-Token": "test-sketchfab-token",
+    }
+    payload = {
+        "action": "select_3d_model",
+        "data": {"uid": "model_uid_abc", "query": "chair"},
+    }
+
+    resp = client.post("/api/v1/analyze", json=payload, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    mock_fetch.assert_called_once_with(
+        "model_uid_abc", "test-sketchfab-token", query="chair"
+    )
     assert data["label"] == "Selected Model"
     assert data["attribution"]["author"] == "Creator display"
 
@@ -798,13 +830,13 @@ def test_metadata_and_attribution_file_creation(
     mock_stream.return_value = mock_stream_ctx
 
     with patch("httpx.Client.get", side_effect=[mock_detail, mock_download]):
-        fetch_3d_model_by_uid("uid_success_att", "test-token")
+        fetch_3d_model_by_uid("uid_success_att", "test-token", query="chair")
 
     # Assert model was extracted successfully
     model_dir = os.path.join(CACHE_DIR, "uid_success_att")
     assert os.path.exists(os.path.join(model_dir, "scene.gltf"))
 
-    # Assert metadata.json was created correctly
+    # Assert metadata.json was created correctly (Fase 6B.2)
     metadata_path = os.path.join(model_dir, "metadata.json")
     assert os.path.exists(metadata_path)
     with open(metadata_path, "r", encoding="utf-8") as f:
@@ -812,6 +844,9 @@ def test_metadata_and_attribution_file_creation(
     assert meta["source"] == "Sketchfab"
     assert meta["model_uid"] == "uid_success_att"
     assert meta["model_name"] == "Compliant CC BY Model"
+    assert meta["model_url"] == "https://sketchfab.com/models/uid_success_att"
+    assert meta["downloaded_asset"] == "scene.gltf"
+    assert meta["search_query"] == "chair"
     assert meta["author"] == "Science Professor"
     assert meta["license"] == "CC BY"
     assert meta["attribution_required"] is True
